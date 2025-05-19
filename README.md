@@ -9,8 +9,6 @@ Tested with aMule v2.3.3.
 - Communicate with aMule via EC protocol
 - Send commands and receive status or transfer info
 
-## Getting Started
-
 ### Installation
 
 ```bash
