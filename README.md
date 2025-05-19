@@ -23,7 +23,7 @@ npm install
 npm start
 ```
 
-See [`examples/basicClient.js`](examples/test.js) for usage.
+See [`examples/test.js`](examples/test.js) for usage.
 
 ## License
 
