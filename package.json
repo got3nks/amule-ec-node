@@ -1,0 +1,16 @@
+{
+  "name": "amule-ec-node",
+  "version": "1.0.0",
+  "main": "examples/test.js",
+  "scripts": {
+    "start": "node examples/test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "node-telegram-bot-api": "^0.66.0",
+    "sharp": "^0.34.1"
+  }
+}
