@@ -2,6 +2,8 @@
 
 This project provides a Node.js implementation of the aMule External Connector (EC) Protocol based on the [aMule EC Protocol HOWTO](https://wiki.amule.org/wiki/EC_Protocol_HOWTO).
 
+Tested with aMule v2.3.3.
+
 ## Features
 
 - Communicate with aMule/EMule via EC protocol
