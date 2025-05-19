@@ -6,7 +6,7 @@ Tested with aMule v2.3.3.
 
 ## Features
 
-- Communicate with aMule/EMule via EC protocol
+- Communicate with aMule via EC protocol
 - Send commands and receive status or transfer info
 
 ## Getting Started
