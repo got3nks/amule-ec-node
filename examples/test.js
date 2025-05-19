@@ -1,4 +1,4 @@
-const AmuleClient = require('./AmuleClient');
+const AmuleClient = require('./../AmuleClient');
 
 const DEBUG = true;
 const amuleClient = new AmuleClient("127.0.0.1", 4712, "your_password");
