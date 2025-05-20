@@ -9,8 +9,5 @@
   "author": "",
   "license": "ISC",
   "description": "aMule EC Protocol NodeJS implementation",
-  "dependencies": {
-    "node-telegram-bot-api": "^0.66.0",
-    "sharp": "^0.34.1"
-  }
+  "dependencies": {}
 }
