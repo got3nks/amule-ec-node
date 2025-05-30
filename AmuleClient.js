@@ -159,7 +159,7 @@ class AmuleClient {
     await this._search(query, network, extension);
 
     if (DEBUG) console.log("[DEBUG] Waiting for search to complete...");
-    await new Promise(resolve => setTimeout(resolve, intervalMs)); // for global/local searches, let's give amule some time for the progress to re-initialize
+    await new Promise(resolve => setTimeout(resolve, 5000)); // for global/local searches, let's give amule some time for the progress to re-initialize
 
     while (true) {
       const elapsed = Date.now() - startTime;
@@ -171,7 +171,7 @@ class AmuleClient {
 
       if (
         (network == EC_SEARCH_TYPE.EC_SEARCH_KAD &&  (statusValue === 0xFFFF || statusValue === 0xFFFE)) || 
-        (network == EC_SEARCH_TYPE.EC_SEARCH_GLOBAL && statusValue == 100) || 
+        (network == EC_SEARCH_TYPE.EC_SEARCH_GLOBAL && (statusValue == 100 || statusValue == 0)) || 
         (network == EC_SEARCH_TYPE.EC_SEARCH_LOCAL && elapsed >= 10000) // we get no progress for local searches, but they should be fast
       ) {
         if (DEBUG) console.log("[DEBUG] Search completed.");
