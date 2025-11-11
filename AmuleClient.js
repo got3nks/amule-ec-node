@@ -133,7 +133,7 @@ class AmuleClient {
 
     results.sort((a, b) => (b.sourceCount || 0) - (a.sourceCount || 0));
 
-    return { resultsLenght: results.length, results: results };
+    return { resultsLength: results.length, results: results };
   }
 
   async searchAndWaitResults(query, network, extension) {
