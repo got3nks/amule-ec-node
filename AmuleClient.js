@@ -6,6 +6,7 @@ const {
   EC_TAGS,
   EC_TAG_TYPES,
   EC_SEARCH_TYPE,
+  EC_VALUE_TYPE
 } = require("./ECDefs");
 
 const DEBUG = false;
@@ -24,6 +25,94 @@ class AmuleClient {
     this.session.close();
   }
 
+  async getConnectionState() {
+    if (DEBUG) console.log("[DEBUG] Requesting connection state...");
+    
+    // Send request
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_CONNSTATE, []);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    return this.buildTagTree(response.tags);
+  }
+
+  async getStats() {
+    if (DEBUG) console.log("[DEBUG] Requesting stats...");
+    
+    // Send request
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_STAT_REQ, []);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    return this.buildTagTree(response.tags);
+  }
+  
+  async getStatsTree() {
+    if (DEBUG) console.log("[DEBUG] Requesting stats tree...");
+    
+    // Send request
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_STATSTREE, []);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    return this.buildTagTree(response.tags);
+  }
+
+  async getServerInfo() {
+    if (DEBUG) console.log("[DEBUG] Requesting server info...");
+    
+    // Send request
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_SERVERINFO, []);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    return this.buildTagTree(response.tags);
+  }
+
+  async getLog() {
+    if (DEBUG) console.log("[DEBUG] Requesting logs...");
+    
+    // Send request
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_LOG, []);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    return this.buildTagTree(response.tags);
+  }
+
+  async getDebugLog() {
+    if (DEBUG) console.log("[DEBUG] Requesting debug logs...");
+    
+    // Send request
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_DEBUGLOG, []);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    return this.buildTagTree(response.tags);
+  }
+
+  async getDownloadingQueue() {
+    if (DEBUG) console.log("[DEBUG] Requesting download queue...");
+    
+    // Send request
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_DLOAD_QUEUE, []);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    return this.buildTagTree(response.tags);
+  }
+
+  async getUploadingQueue() {
+    if (DEBUG) console.log("[DEBUG] Requesting upload queue...");
+    
+    // Send request
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_ULOAD_QUEUE, []);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    return this.buildTagTree(response.tags);
+  }
+
   async getSharedFiles() {
     if (DEBUG) console.log("[DEBUG] Requesting shared files...");
     
@@ -38,6 +127,12 @@ class AmuleClient {
       fileHash: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_HASH)?.humanValue,
       fileSize: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SIZE_FULL)?.humanValue,
       transferred: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_XFERRED)?.humanValue,
+      transferredTotal: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_XFERRED_ALL)?.humanValue,
+      reqCount: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_REQ_COUNT)?.humanValue,
+      reqCountTotal: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_REQ_COUNT_ALL)?.humanValue,
+      acceptedCount: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_ACCEPT_COUNT)?.humanValue,
+      acceptedCountTotal: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_ACCEPT_COUNT_ALL)?.humanValue,
+      priority: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_PRIO)?.humanValue,
     }));
 
     return sharedFiles;
@@ -186,7 +281,7 @@ class AmuleClient {
   }
 
   async downloadSearchResult(fileHash) {
-    if (DEBUG) console.log("[DEBUG] Requesting download ",filehHsh," from search result...");
+    if (DEBUG) console.log("[DEBUG] Requesting download ",fileHash," from search result...");
 
     const reqTags = [
       this.session.createTag(
@@ -221,7 +316,9 @@ class AmuleClient {
     return response.opcode==1;
   }
  
-
+  /*
+      Helper functions
+  */
   formatUnixTimestamp(unixTimestamp) {
     const date = new Date(unixTimestamp * 1000); // Convert seconds to milliseconds
 
@@ -234,6 +331,111 @@ class AmuleClient {
     const seconds = String(date.getSeconds()).padStart(2, '0');
 
     return `${dd}-${mm}-${yyyy} ${minutes}:${hours}:${seconds}`;
+  }
+
+  formatValue(value, type) {
+    if (value === undefined || value === null) return value;
+    
+    switch (type) {
+      case EC_VALUE_TYPE.EC_VALUE_BYTES: {
+        // Convert bytes to human-readable format
+        const num = typeof value === 'string' ? BigInt(value) : BigInt(value);
+        const bytes = Number(num);
+        
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
+        if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+        return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+      }
+      
+      case EC_VALUE_TYPE.EC_VALUE_SPEED: {
+        // Convert bytes/s to KB/s
+        const kbps = value / 1024;
+        return `${kbps.toFixed(2)} KB/s`;
+      }
+      
+      case EC_VALUE_TYPE.EC_VALUE_TIME: {
+        // Convert seconds to days + hours + minutes
+        const seconds = Number(value);
+        const days = Math.floor(seconds / 86400);
+        const hours = Math.floor((seconds % 86400) / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const secs = seconds % 60;
+        
+        const parts = [];
+        if (days > 0) parts.push(`${days}d`);
+        if (hours > 0) parts.push(`${hours}h`);
+        if (minutes > 0) parts.push(`${minutes}m`);
+        if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
+        
+        return parts.join(' ');
+      }
+      
+      case EC_VALUE_TYPE.EC_VALUE_DOUBLE:
+        return typeof value === 'number' ? value.toFixed(2) : value;
+      
+      case EC_VALUE_TYPE.EC_VALUE_INTEGER:
+      case EC_VALUE_TYPE.EC_VALUE_ISTRING:
+      case EC_VALUE_TYPE.EC_VALUE_ISHORT:
+      case EC_VALUE_TYPE.EC_VALUE_STRING:
+      default:
+        return value;
+    }
+  }
+
+  buildTagTree(tags) {
+    const obj = {};
+    
+    for (const tag of tags) {
+      // Skip EC_TAG_STATTREE_NODEID - not needed in output
+      if (tag.tagIdStr === 'EC_TAG_STATTREE_NODEID') continue;
+      
+      // Check if this tag has a value type specified in children
+      let valueType = null;
+      let formattedValue = tag.humanValue;
+      
+      if (tag.children && tag.children.length > 0) {
+        const valueTypeTag = tag.children.find(child => child.tagIdStr === 'EC_TAG_STAT_VALUE_TYPE');
+        if (valueTypeTag) {
+          valueType = valueTypeTag.humanValue;
+          formattedValue = this.formatValue(tag.humanValue, valueType);
+        }
+      }
+      
+      // Recursively build children (excluding EC_TAG_STAT_VALUE_TYPE and EC_TAG_STATTREE_NODEID)
+      const childrenObj = tag.children && tag.children.length > 0 
+        ? this.buildTagTree(tag.children.filter(child => 
+            child.tagIdStr !== 'EC_TAG_STAT_VALUE_TYPE' && 
+            child.tagIdStr !== 'EC_TAG_STATTREE_NODEID'
+          ))
+        : null;
+      
+      // Determine the node structure based on what we have
+      let node;
+      if (childrenObj && Object.keys(childrenObj).length > 0) {
+        // Has children - create object with value (if meaningful) and spread children
+        if (formattedValue !== undefined && formattedValue !== null && formattedValue !== '') {
+          node = { _value: formattedValue, ...childrenObj };
+        } else {
+          node = childrenObj;
+        }
+      } else {
+        // No children - just use the formatted value directly
+        node = formattedValue;
+      }
+      
+      // Handle duplicate keys by converting to array
+      if (obj.hasOwnProperty(tag.tagIdStr)) {
+        if (!Array.isArray(obj[tag.tagIdStr])) {
+          obj[tag.tagIdStr] = [obj[tag.tagIdStr]];
+        }
+        obj[tag.tagIdStr].push(node);
+      } else {
+        obj[tag.tagIdStr] = node;
+      }
+    }
+    
+    return obj;
   }
 }
 
