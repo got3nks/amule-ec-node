@@ -27,4 +27,4 @@ See [`examples/test.js`](examples/test.js) for usage.
 
 ## License
 
-ISC
+MIT
