@@ -1,13 +1,12 @@
 {
   "name": "amule-ec-node",
   "version": "1.0.0",
-  "main": "examples/test.js",
+  "description": "Node.js library for aMule External Connection (EC) protocol",
+  "main": "AmuleClient.js",
   "scripts": {
-    "start": "node examples/test.js"
+    "test": "node examples/test.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "aMule EC Protocol NodeJS implementation",
-  "dependencies": {}
+  "keywords": ["amule", "ec", "protocol", "p2p", "ed2k"],
+  "author": "got3nks",
+  "license": "MIT"
 }
