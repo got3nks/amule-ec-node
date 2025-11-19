@@ -19,6 +19,8 @@ class ECProtocol {
     this.password = password;
     this.socket = null;
     this.bufferedData = Buffer.alloc(0);
+    this.manualClose = false;
+    this.reconnecting = false;
   }
 
   async connect() {
@@ -26,17 +28,55 @@ class ECProtocol {
       this.socket = new net.Socket();
       this.socket.connect(this.port, this.host, () => {
         if(DEBUG) console.log("Connected to aMule EC interface");
+        this.setupSocketListeners();
         resolve();
       });
       this.socket.on("error", reject);
     });
   }
 
+  setupSocketListeners() {
+    this.socket.on("close", async () => {
+      if(this.manualClose === false) {
+        console.warn("[ECProtocol] Connection closed. Attempting reconnect...");
+        await this.reconnect();
+      }
+    });
+
+    this.socket.on("error", async (err) => {
+      console.error("[ECProtocol] Socket error:", err.message);
+      if (!this.socket.destroyed) this.socket.destroy();
+      await this.reconnect();
+    });
+  }
+
   close() {
     if (this.socket) {
+      this.manualClose = true;
       this.socket.end();
       this.socket.destroy();
+      this.socket = null;
     }
+  }
+
+  async reconnect(retries = 6, delayMs = 10000) {
+    if (this.reconnecting) return;
+    this.reconnecting = true;
+    for (let i = 0; i < retries; i++) {
+      try {
+        console.log(`[ECProtocol] Reconnecting attempt ${i + 1}...`);
+        await this.connect();
+        await this.authenticate();
+        console.log("[ECProtocol] Reconnected and authenticated successfully.");
+        this.reconnecting = false;
+        return;
+      } catch (err) {
+        console.warn(`[ECProtocol] Reconnect attempt ${i + 1} failed:`, err.message);
+        await new Promise(r => setTimeout(r, delayMs));
+      }
+    }
+    this.reconnecting = false;
+    throw new Error("[ECProtocol] Unable to reconnect after multiple attempts.");
   }
 
   /*
@@ -155,6 +195,11 @@ class ECProtocol {
    * Send a packet to the server and resolve with the parsed reply.
    */
   async sendPacket(opcode, tags = []) {
+    if (!this.socket || this.socket.destroyed) {
+      if(DEBUG) console.warn("[ECProtocol] Socket is not connected. Reconnecting...");
+      await this.reconnect();
+    }
+
     return new Promise((resolve, reject) => {
       try {
         const packet = this.buildPacket(opcode, tags);
@@ -302,13 +347,23 @@ class ECProtocol {
       humanValue = tagValue.readUInt32BE(0);
     } else if (tagType === EC_TAG_TYPES.EC_TAGTYPE_UINT64) {
       humanValue = tagValue.readBigUInt64BE(0).toString();
+    } else if (tagType === EC_TAG_TYPES.EC_TAGTYPE_UINT128) {
+      humanValue = tagValue.readBigUInt64BE(0).toString() + tagValue.readBigUInt64BE(8).toString();
     } else if (tagType === EC_TAG_TYPES.EC_TAGTYPE_STRING) {
       humanValue = tagValue.toString('utf8').replace(/\0+$/, '');
+    } else if (tagType === EC_TAG_TYPES.EC_TAGTYPE_DOUBLE) {
+      humanValue = parseFloat(tagValue.toString('utf8').replace(/\0+$/, ''));
     } else if (tagType === EC_TAG_TYPES.EC_TAGTYPE_HASH16) {
       humanValue = tagValue.toString('hex');
       if (humanValue.length !== 32) console.warn('Warning: HASH16 incorrect length');
+    } else if (tagType === EC_TAG_TYPES.EC_TAGTYPE_IPV4) {
+      const ipBytes = tagValue.slice(0, 4);
+      const portBytes = tagValue.slice(4, 6);
+      const ipStr = Array.from(ipBytes).join('.');
+      const port = portBytes.readUInt16BE(0);
+      humanValue = `${ipStr}:${port}`;
     } else {
-      throw new Error("Parsing unsopported tagType 0x" + tagType.toString(16)+ " for tagId " + tagIdStr);
+       throw new Error("Parsing unsopported tagType 0x" + tagType.toString(16)+ " for tagId " + tagIdStr);
     }
 
     const tag = {
