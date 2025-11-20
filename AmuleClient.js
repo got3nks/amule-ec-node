@@ -91,6 +91,71 @@ class AmuleClient {
     return this.buildTagTree(response.tags);
   }
 
+  async getServerList() {
+    if (DEBUG) console.log("[DEBUG] Requesting server list...");
+    
+    // Send request
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_SERVER_LIST, []);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    return this.buildTagTree(response.tags);
+  }
+
+  async removeServer(ip, port) {
+    if (DEBUG) console.log("[DEBUG] Removing server...");
+
+    const reqTags = [
+      this.session.createTag(
+        EC_TAGS.EC_TAG_SERVER,
+        EC_TAG_TYPES.EC_TAGTYPE_IPV4,
+        {ip, port}
+      )
+    ];
+    
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_SERVER_REMOVE, reqTags);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    return response.opcode==1;
+  }
+
+  async connectServer(ip, port) {
+    if (DEBUG) console.log("[DEBUG] Connecting to server...");
+
+    const reqTags = [
+      this.session.createTag(
+        EC_TAGS.EC_TAG_SERVER,
+        EC_TAG_TYPES.EC_TAGTYPE_IPV4,
+        {ip, port}
+      )
+    ];
+    
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_SERVER_CONNECT, reqTags);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    return response.opcode==1;
+  }
+
+  async disconnectServer(ip, port) {
+    if (DEBUG) console.log("[DEBUG] Disconnecting from server...");
+
+    const reqTags = [
+      this.session.createTag(
+        EC_TAGS.EC_TAG_SERVER,
+        EC_TAG_TYPES.EC_TAGTYPE_IPV4,
+        {ip, port}
+      )
+    ];
+    
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_SERVER_DISCONNECT, reqTags);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    return response.opcode==1;
+  }
+
   async getDownloadingQueue() {
     if (DEBUG) console.log("[DEBUG] Requesting download queue...");
     
