@@ -118,6 +118,20 @@ class ECProtocol {
           valueBuffer = Buffer.alloc(1);
           valueBuffer.writeUInt8(value, 0);
           break;
+        case EC_TAG_TYPES.EC_TAGTYPE_IPV4:
+          const {ip, port} = value;
+          const parts = ip.split('.').map(Number);
+          valueBuffer = Buffer.alloc(6);
+
+          // IP little-endian
+          valueBuffer[0] = parts[0];
+          valueBuffer[1] = parts[1];
+          valueBuffer[2] = parts[2];
+          valueBuffer[3] = parts[3];
+
+          // Port big-endian (network order)
+          valueBuffer.writeUInt16BE(port, 4);
+          break;
         case EC_TAG_TYPES.EC_TAGTYPE_HASH16:
           if (typeof value === "string") {
             // Assumes hexadecimal string format.
