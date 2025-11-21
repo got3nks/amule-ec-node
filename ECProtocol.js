@@ -103,7 +103,7 @@ class ECProtocol {
         await this.connect();
         if(DEBUG) console.log(`[ECProtocol] Authentication attempt ${i + 1}...`);
         await this.authenticate();
-        if(DEBUG) console.log("[ECProtocol] Reconnected and authenticated successfully.");
+        console.log("[ECProtocol] Reconnected and authenticated successfully.");
         this.reconnecting = false;
         return;
       } catch (err) {
@@ -248,11 +248,6 @@ class ECProtocol {
    * Send a packet to the server and resolve with the parsed reply.
    */
   async sendPacket(opcode, tags = []) {
-    if (!this.socket || this.socket.destroyed) {
-      console.warn("[ECProtocol] Socket is not connected. Reconnecting...");
-      await this.reconnect();
-    }
-
     return new Promise((resolve, reject) => {
       let buffer = Buffer.alloc(0);
 
@@ -261,7 +256,9 @@ class ECProtocol {
         if (index !== -1) {
           this.pendingRequests.splice(index, 1);
         }
-        this.socket.removeListener("data", onData);
+        if (this.socket) {
+          this.socket.removeListener("data", onData);
+        }
       };
 
       const onData = (data) => {
@@ -294,6 +291,10 @@ class ECProtocol {
 
       // Send the packet
       try {
+        if (!this.socket || this.socket.destroyed) {
+          throw new Error("Socket is not connected");
+        }
+        
         const packet = this.buildPacket(opcode, tags);
         this.pendingRequests.push({ resolve, reject, onData });
         this.socket.on("data", onData);
