@@ -380,6 +380,33 @@ class AmuleClient {
 
     return response.opcode==1;
   }
+
+  async addEd2kLink(link, category=0) {
+    if (DEBUG) console.log("[DEBUG] Requesting ed2k link download ",link,"...");
+
+    // Prepare request
+    let children = [
+      {
+        tagId: EC_TAGS.EC_TAG_PARTFILE_CAT,
+        tagType: EC_TAG_TYPES.EC_TAGTYPE_UINT8,
+        value: category
+      }
+    ];
+    const reqTags = [
+      this.session.createTag(
+        EC_TAGS.EC_TAG_STRING,
+        EC_TAG_TYPES.EC_TAGTYPE_STRING,
+        link,
+        children
+      )
+    ];
+    
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_ADD_LINK, reqTags);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    return response.opcode==1; 
+  }
  
   /*
       Helper functions
