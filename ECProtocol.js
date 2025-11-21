@@ -21,23 +21,30 @@ class ECProtocol {
     this.bufferedData = Buffer.alloc(0);
     this.manualClose = false;
     this.reconnecting = false;
+    this.pendingRequests = [];
   }
 
   async connect() {
     return new Promise((resolve, reject) => {
       this.socket = new net.Socket();
+      
+      const onError = (err) => reject(err);
+      this.socket.once("error", onError);
+      
       this.socket.connect(this.port, this.host, () => {
         if(DEBUG) console.log("Connected to aMule EC interface");
+        this.socket.removeListener("error", onError);
         this.setupSocketListeners();
         resolve();
       });
-      this.socket.on("error", reject);
     });
   }
 
   setupSocketListeners() {
     this.socket.on("close", async () => {
-      if(this.manualClose === false) {
+      this.rejectPendingRequests(new Error("Connection closed"));
+      
+      if(this.manualClose === false && !this.reconnecting) {
         console.warn("[ECProtocol] Connection closed. Attempting reconnect...");
         await this.reconnect();
       }
@@ -45,14 +52,31 @@ class ECProtocol {
 
     this.socket.on("error", async (err) => {
       console.error("[ECProtocol] Socket error:", err.message);
+      
+      this.rejectPendingRequests(err);
+      
       if (!this.socket.destroyed) this.socket.destroy();
-      await this.reconnect();
+      
+      if (!this.reconnecting) {
+        await this.reconnect();
+      }
     });
+  }
+
+  rejectPendingRequests(error) {
+    while (this.pendingRequests.length > 0) {
+      const request = this.pendingRequests.shift();
+      if (this.socket) {
+        this.socket.removeListener("data", request.onData);
+      }
+      request.reject(error);
+    }
   }
 
   close() {
     if (this.socket) {
       this.manualClose = true;
+      this.rejectPendingRequests(new Error("Connection manually closed"));
       this.socket.end();
       this.socket.destroy();
       this.socket = null;
@@ -62,19 +86,34 @@ class ECProtocol {
   async reconnect(retries = 6, delayMs = 10000) {
     if (this.reconnecting) return;
     this.reconnecting = true;
+    this.manualClose = false;
+    
+    if (this.socket) {
+      this.rejectPendingRequests(new Error("Reconnecting"));
+      this.socket.removeAllListeners();
+      if (!this.socket.destroyed) {
+        this.socket.destroy();
+      }
+      this.socket = null;
+    }
+    
     for (let i = 0; i < retries; i++) {
       try {
-        console.log(`[ECProtocol] Reconnecting attempt ${i + 1}...`);
+        if(DEBUG) console.log(`[ECProtocol] Reconnection attempt ${i + 1}...`);
         await this.connect();
+        if(DEBUG) console.log(`[ECProtocol] Authentication attempt ${i + 1}...`);
         await this.authenticate();
-        console.log("[ECProtocol] Reconnected and authenticated successfully.");
+        if(DEBUG) console.log("[ECProtocol] Reconnected and authenticated successfully.");
         this.reconnecting = false;
         return;
       } catch (err) {
         console.warn(`[ECProtocol] Reconnect attempt ${i + 1} failed:`, err.message);
-        await new Promise(r => setTimeout(r, delayMs));
+        if (i < retries - 1) {
+          await new Promise(r => setTimeout(r, delayMs));
+        }
       }
     }
+    
     this.reconnecting = false;
     throw new Error("[ECProtocol] Unable to reconnect after multiple attempts.");
   }
@@ -210,19 +249,20 @@ class ECProtocol {
    */
   async sendPacket(opcode, tags = []) {
     if (!this.socket || this.socket.destroyed) {
-      if(DEBUG) console.warn("[ECProtocol] Socket is not connected. Reconnecting...");
+      console.warn("[ECProtocol] Socket is not connected. Reconnecting...");
       await this.reconnect();
     }
 
     return new Promise((resolve, reject) => {
-      try {
-        const packet = this.buildPacket(opcode, tags);
-        this.socket.write(packet);
-      } catch (err) {
-        return reject(err);
-      }
-
       let buffer = Buffer.alloc(0);
+
+      const cleanup = () => {
+        const index = this.pendingRequests.findIndex(r => r.onData === onData);
+        if (index !== -1) {
+          this.pendingRequests.splice(index, 1);
+        }
+        this.socket.removeListener("data", onData);
+      };
 
       const onData = (data) => {
         try {
@@ -239,7 +279,7 @@ class ECProtocol {
             return; // Wait for more data
           }
 
-          this.socket.removeListener("data", onData); // Stop listening once full packet is received
+          cleanup();
 
           // Process the full packet
           const parsed = this.parsePacket(buffer);
@@ -247,11 +287,20 @@ class ECProtocol {
 
           resolve(parsed);
         } catch (err) {
+          cleanup();
           reject(err);
         }
       };
 
-      this.socket.on("data", onData);
+      // Send the packet
+      try {
+        const packet = this.buildPacket(opcode, tags);
+        this.pendingRequests.push({ resolve, reject, onData });
+        this.socket.on("data", onData);
+        this.socket.write(packet);
+      } catch (err) {
+        reject(err);
+      }
     });
   }
 
@@ -295,13 +344,13 @@ class ECProtocol {
   /*
    * Recursively parse a tag.
    *
-   * A tag’s header consists of:
+   * A tag's header consists of:
    * - 2 bytes: tag name (where the lowest bit indicates presence of children; the actual tag id is the tag name shifted right by 1)
    * - 1 byte: tag type
    * - 4 bytes: tag payload length (contents length)
    *
    * If the tag has children (lowest bit set), the payload begins with a 2-byte children count,
-   * followed by each child (recursively), and then the tag’s own value (if any).
+   * followed by each child (recursively), and then the tag's own value (if any).
    */
   readTag(buffer, offset) {
     const start = offset;
@@ -398,6 +447,8 @@ class ECProtocol {
    * Authentication flow.
    */
   async authenticate() {
+    if(DEBUG) console.log("[ECProtocol] Authenticating...");
+    
     // Step 1: Build and send the AUTH_REQ packet.
     const clientNameTag = this.createTag(
       EC_TAGS.EC_TAG_CLIENT_NAME,
