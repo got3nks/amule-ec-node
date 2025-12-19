@@ -149,6 +149,10 @@ class ECProtocol {
           // For strings, we use UTF-8 with a terminating null byte.
           valueBuffer = Buffer.from(value + "\0", "utf8");
           break;
+        case EC_TAG_TYPES.EC_TAGTYPE_UINT32:
+          valueBuffer = Buffer.alloc(4);
+          valueBuffer.writeUInt32BE(value, 0);
+          break;
         case EC_TAG_TYPES.EC_TAGTYPE_UINT16:
           valueBuffer = Buffer.alloc(2);
           valueBuffer.writeUInt16BE(value, 0);
