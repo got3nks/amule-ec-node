@@ -222,6 +222,7 @@ class AmuleClient {
       sourceCount: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SOURCE_COUNT)?.humanValue,
       speed: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SPEED)?.humanValue,
       priority: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_PRIO)?.humanValue,
+      category: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_CAT)?.humanValue || 0,
       lastSeenComplete: this.formatUnixTimestamp(tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_LAST_SEEN_COMP)?.humanValue),
     }));
 
@@ -346,17 +347,26 @@ class AmuleClient {
     return this.getSearchResults?.() ?? null;
   }
 
-  async downloadSearchResult(fileHash) {
-    if (DEBUG) console.log("[DEBUG] Requesting download ",fileHash," from search result...");
+  async downloadSearchResult(fileHash, categoryId = 0) {
+    if (DEBUG) console.log("[DEBUG] Requesting download ",fileHash," from search result with category", categoryId, "...");
+
+    const children = categoryId !== 0 ? [
+      {
+        tagId: EC_TAGS.EC_TAG_PARTFILE_CAT,
+        tagType: EC_TAG_TYPES.EC_TAGTYPE_UINT32,
+        value: categoryId
+      }
+    ] : [];
 
     const reqTags = [
       this.session.createTag(
         EC_TAGS.EC_TAG_PARTFILE,
         EC_TAG_TYPES.EC_TAGTYPE_HASH16,
-        fileHash
+        fileHash,
+        children
       )
     ];
-    
+
     const response = await this.session.sendPacket(EC_OPCODES.EC_OP_DOWNLOAD_SEARCH_RESULT, reqTags);
 
     if (DEBUG) console.log("[DEBUG] Received response:", response);
