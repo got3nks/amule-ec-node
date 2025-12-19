@@ -6,7 +6,8 @@ const {
   EC_TAGS,
   EC_TAG_TYPES,
   EC_SEARCH_TYPE,
-  EC_VALUE_TYPE
+  EC_VALUE_TYPE,
+  EC_PREFS
 } = require("./ECDefs");
 
 const DEBUG = false;
@@ -381,15 +382,15 @@ class AmuleClient {
     return response.opcode==1;
   }
 
-  async addEd2kLink(link, category=0) {
+  async addEd2kLink(link, categoryId=0) {
     if (DEBUG) console.log("[DEBUG] Requesting ed2k link download ",link,"...");
 
     // Prepare request
     let children = [
       {
         tagId: EC_TAGS.EC_TAG_PARTFILE_CAT,
-        tagType: EC_TAG_TYPES.EC_TAGTYPE_UINT8,
-        value: category
+        tagType: EC_TAG_TYPES.EC_TAGTYPE_UINT32,  // Changed from UINT8 to UINT32
+        value: categoryId
       }
     ];
     const reqTags = [
@@ -400,17 +401,230 @@ class AmuleClient {
         children
       )
     ];
-    
+
     const response = await this.session.sendPacket(EC_OPCODES.EC_OP_ADD_LINK, reqTags);
 
     if (DEBUG) console.log("[DEBUG] Received response:", response);
 
-    return response.opcode==1; 
+    return response.opcode==1;
+  }
+
+  // Category Management Methods
+
+  async getCategories() {
+    if (DEBUG) console.log("[DEBUG] Requesting categories...");
+
+    // Request preferences with categories flag (as per aMule WebServer implementation)
+    const reqTags = [
+      this.session.createTag(
+        EC_TAGS.EC_TAG_SELECT_PREFS,
+        EC_TAG_TYPES.EC_TAGTYPE_UINT32,
+        EC_PREFS.EC_PREFS_CATEGORIES
+      )
+    ];
+
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_PREFERENCES, reqTags);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    // Parse response - first tag is EC_TAG_PREFS_CATEGORIES container
+    return this.parseCategories(response.tags);
+  }
+
+  async createCategory(title, path = '', comment = '', color = 0, priority = 0) {
+    if (DEBUG) console.log("[DEBUG] Creating category:", title);
+
+    const children = [
+      {
+        tagId: EC_TAGS.EC_TAG_CATEGORY_TITLE,
+        tagType: EC_TAG_TYPES.EC_TAGTYPE_STRING,
+        value: title
+      },
+      {
+        tagId: EC_TAGS.EC_TAG_CATEGORY_PATH,
+        tagType: EC_TAG_TYPES.EC_TAGTYPE_STRING,
+        value: path
+      },
+      {
+        tagId: EC_TAGS.EC_TAG_CATEGORY_COMMENT,
+        tagType: EC_TAG_TYPES.EC_TAGTYPE_STRING,
+        value: comment
+      },
+      {
+        tagId: EC_TAGS.EC_TAG_CATEGORY_COLOR,
+        tagType: EC_TAG_TYPES.EC_TAGTYPE_UINT32,
+        value: color  // RGB format: 0xRRGGBB
+      },
+      {
+        tagId: EC_TAGS.EC_TAG_CATEGORY_PRIO,
+        tagType: EC_TAG_TYPES.EC_TAGTYPE_UINT8,
+        value: priority
+      }
+    ];
+
+    const reqTags = [
+      this.session.createTag(
+        EC_TAGS.EC_TAG_CATEGORY,
+        EC_TAG_TYPES.EC_TAGTYPE_CUSTOM,
+        undefined,  // No value for container tag
+        children
+      )
+    ];
+
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_CREATE_CATEGORY, reqTags);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    // Parse the new category ID from response
+    const categoryId = this.parseCategoryIdFromResponse(response);
+
+    return {
+      success: response.opcode === EC_OPCODES.EC_OP_NOOP || response.opcode === 0x01,
+      categoryId: categoryId
+    };
+  }
+
+  async updateCategory(categoryId, title, path, comment, color, priority) {
+    if (DEBUG) console.log("[DEBUG] Updating category:", categoryId);
+
+    const children = [
+      {
+        tagId: EC_TAGS.EC_TAG_CATEGORY_TITLE,
+        tagType: EC_TAG_TYPES.EC_TAGTYPE_STRING,
+        value: title
+      },
+      {
+        tagId: EC_TAGS.EC_TAG_CATEGORY_PATH,
+        tagType: EC_TAG_TYPES.EC_TAGTYPE_STRING,
+        value: path
+      },
+      {
+        tagId: EC_TAGS.EC_TAG_CATEGORY_COMMENT,
+        tagType: EC_TAG_TYPES.EC_TAGTYPE_STRING,
+        value: comment
+      },
+      {
+        tagId: EC_TAGS.EC_TAG_CATEGORY_COLOR,
+        tagType: EC_TAG_TYPES.EC_TAGTYPE_UINT32,
+        value: color
+      },
+      {
+        tagId: EC_TAGS.EC_TAG_CATEGORY_PRIO,
+        tagType: EC_TAG_TYPES.EC_TAGTYPE_UINT8,
+        value: priority
+      }
+    ];
+
+    const reqTags = [
+      this.session.createTag(
+        EC_TAGS.EC_TAG_CATEGORY,
+        EC_TAG_TYPES.EC_TAGTYPE_UINT32,  // Category ID is uint32
+        categoryId,
+        children
+      )
+    ];
+
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_UPDATE_CATEGORY, reqTags);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    return response.opcode === EC_OPCODES.EC_OP_NOOP || response.opcode === 0x01;
+  }
+
+  async deleteCategory(categoryId) {
+    if (DEBUG) console.log("[DEBUG] Deleting category:", categoryId);
+
+    const reqTags = [
+      this.session.createTag(
+        EC_TAGS.EC_TAG_CATEGORY,
+        EC_TAG_TYPES.EC_TAGTYPE_UINT32,
+        categoryId
+      )
+    ];
+
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_DELETE_CATEGORY, reqTags);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    return response.opcode === EC_OPCODES.EC_OP_NOOP || response.opcode === 0x01;
+  }
+
+  async setFileCategory(fileHash, categoryId) {
+    if (DEBUG) console.log("[DEBUG] Setting file category:", fileHash, "->", categoryId);
+
+    const children = [
+      {
+        tagId: EC_TAGS.EC_TAG_PARTFILE_CAT,
+        tagType: EC_TAG_TYPES.EC_TAGTYPE_UINT32,  // Category ID is uint32
+        value: categoryId
+      }
+    ];
+
+    const reqTags = [
+      this.session.createTag(
+        EC_TAGS.EC_TAG_PARTFILE,
+        EC_TAG_TYPES.EC_TAGTYPE_HASH16,
+        fileHash,
+        children
+      )
+    ];
+
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_PARTFILE_SET_CAT, reqTags);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    return response.opcode === EC_OPCODES.EC_OP_NOOP || response.opcode === 0x01;
   }
  
   /*
       Helper functions
   */
+  parseCategories(tags) {
+    // As per aMule source: first tag is EC_TAG_PREFS_CATEGORIES container
+    const prefsTag = tags[0];
+
+    // Check if we have any tags at all (empty response means no categories)
+    if (!tags || tags.length === 0) {
+      return [];
+    }
+
+    // Check if it's the categories tag
+    if (!prefsTag || prefsTag.tagId !== EC_TAGS.EC_TAG_PREFS_CATEGORIES) {
+      if (DEBUG) console.warn('Expected EC_TAG_PREFS_CATEGORIES but got:', prefsTag?.tagId);
+      return [];
+    }
+
+    if (!prefsTag.children || prefsTag.children.length === 0) {
+      return [];  // No categories defined
+    }
+
+    // Each child is EC_TAG_CATEGORY with ID as value and properties as children
+    return prefsTag.children
+      .filter(t => t.tagId === EC_TAGS.EC_TAG_CATEGORY)
+      .map((catTag, index) => {
+        // Category ID from tag value - handle both Buffer and number types
+        let id = catTag.humanValue || catTag.value || index;
+        if (Buffer.isBuffer(id)) {
+          id = id.readUInt8(0);  // Convert Buffer to number
+        }
+
+        const title = catTag.children?.find(c => c.tagId === EC_TAGS.EC_TAG_CATEGORY_TITLE)?.humanValue || '';
+        const path = catTag.children?.find(c => c.tagId === EC_TAGS.EC_TAG_CATEGORY_PATH)?.humanValue || '';
+        const comment = catTag.children?.find(c => c.tagId === EC_TAGS.EC_TAG_CATEGORY_COMMENT)?.humanValue || '';
+        const color = catTag.children?.find(c => c.tagId === EC_TAGS.EC_TAG_CATEGORY_COLOR)?.humanValue || 0;
+        const priority = catTag.children?.find(c => c.tagId === EC_TAGS.EC_TAG_CATEGORY_PRIO)?.humanValue || 0;
+
+        return { id, title, path, comment, color, priority };
+      });
+  }
+
+  parseCategoryIdFromResponse(response) {
+    // aMule returns the new category ID in the response
+    // Look for EC_TAG_CATEGORY tag with the new ID
+    const categoryTag = response.tags?.find(t => t.tagId === EC_TAGS.EC_TAG_CATEGORY);
+    return categoryTag?.humanValue || categoryTag?.value || null;
+  }
+
   formatUnixTimestamp(unixTimestamp) {
     const date = new Date(unixTimestamp * 1000); // Convert seconds to milliseconds
 
