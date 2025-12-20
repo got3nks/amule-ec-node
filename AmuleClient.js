@@ -199,6 +199,7 @@ class AmuleClient {
       acceptedCount: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_ACCEPT_COUNT)?.humanValue,
       acceptedCountTotal: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_ACCEPT_COUNT_ALL)?.humanValue,
       priority: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_PRIO)?.humanValue,
+      path: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_FILENAME)?.humanValue
     }));
 
     return sharedFiles;
@@ -223,7 +224,7 @@ class AmuleClient {
       speed: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SPEED)?.humanValue,
       priority: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_PRIO)?.humanValue,
       category: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_CAT)?.humanValue || 0,
-      lastSeenComplete: this.formatUnixTimestamp(tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_LAST_SEEN_COMP)?.humanValue),
+      lastSeenComplete: this.formatUnixTimestamp(tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_LAST_SEEN_COMP)?.humanValue)
     }));
 
     return downloadQueue;
