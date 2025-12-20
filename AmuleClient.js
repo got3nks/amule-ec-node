@@ -488,8 +488,14 @@ class AmuleClient {
     // Parse the new category ID from response
     const categoryId = this.parseCategoryIdFromResponse(response);
 
+    // Success if we got a valid category ID back (aMule created it)
+    // OR if the opcode indicates success
+    const success = categoryId !== null || response.opcode === EC_OPCODES.EC_OP_NOOP || response.opcode === 0x01;
+
+    if (DEBUG) console.log("[DEBUG] Category creation success:", success, "categoryId:", categoryId, "opcode:", response.opcode);
+
     return {
-      success: response.opcode === EC_OPCODES.EC_OP_NOOP || response.opcode === 0x01,
+      success: success,
       categoryId: categoryId
     };
   }
