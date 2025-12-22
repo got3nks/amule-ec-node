@@ -653,7 +653,7 @@ class AmuleClient {
     const hours = String(date.getHours()).padStart(2, '0');
     const seconds = String(date.getSeconds()).padStart(2, '0');
 
-    return `${dd}-${mm}-${yyyy} ${minutes}:${hours}:${seconds}`;
+    return `${dd}-${mm}-${yyyy} ${hours}:${minutes}:${seconds}`;
   }
 
   formatValue(value, type) {
