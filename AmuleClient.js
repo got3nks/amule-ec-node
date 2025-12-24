@@ -218,7 +218,8 @@ class AmuleClient {
       category: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_CAT)?.humanValue || 0,
       lastSeenComplete: this.formatUnixTimestamp(tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_LAST_SEEN_COMP)?.humanValue),
       partStatus: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_PART_STATUS)?.value,
-      gapStatus: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_GAP_STATUS)?.value
+      gapStatus: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_GAP_STATUS)?.value,
+      reqStatus: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_REQ_STATUS)?.value
     }));
 
     return downloadQueue;
