@@ -216,7 +216,7 @@ class AmuleClient {
       speed: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SPEED)?.humanValue,
       priority: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_PRIO)?.humanValue,
       category: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_CAT)?.humanValue || 0,
-      lastSeenComplete: this.formatUnixTimestamp(tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_LAST_SEEN_COMP)?.humanValue),
+      lastSeenComplete: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_LAST_SEEN_COMP)?.humanValue,
       partStatus: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_PART_STATUS)?.value,
       gapStatus: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_GAP_STATUS)?.value,
       reqStatus: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_REQ_STATUS)?.value
@@ -635,20 +635,6 @@ class AmuleClient {
     // Look for EC_TAG_CATEGORY tag with the new ID
     const categoryTag = response.tags?.find(t => t.tagId === EC_TAGS.EC_TAG_CATEGORY);
     return categoryTag?.humanValue || categoryTag?.value || null;
-  }
-
-  formatUnixTimestamp(unixTimestamp) {
-    const date = new Date(unixTimestamp * 1000); // Convert seconds to milliseconds
-
-    const dd = String(date.getDate()).padStart(2, '0');
-    const mm = String(date.getMonth() + 1).padStart(2, '0'); // Months are 0-indexed
-    const yyyy = date.getFullYear();
-
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const seconds = String(date.getSeconds()).padStart(2, '0');
-
-    return `${dd}-${mm}-${yyyy} ${hours}:${minutes}:${seconds}`;
   }
 
   formatValue(value, type) {
