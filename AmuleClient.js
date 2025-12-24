@@ -157,17 +157,6 @@ class AmuleClient {
     return response.opcode==1;
   }
 
-  async getDownloadingQueue() {
-    if (DEBUG) console.log("[DEBUG] Requesting download queue...");
-    
-    // Send request
-    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_DLOAD_QUEUE, []);
-
-    if (DEBUG) console.log("[DEBUG] Received response:", response);
-
-    return this.buildTagTree(response.tags);
-  }
-
   async getUploadingQueue() {
     if (DEBUG) console.log("[DEBUG] Requesting upload queue...");
     
@@ -227,7 +216,9 @@ class AmuleClient {
       speed: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SPEED)?.humanValue,
       priority: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_PRIO)?.humanValue,
       category: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_CAT)?.humanValue || 0,
-      lastSeenComplete: this.formatUnixTimestamp(tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_LAST_SEEN_COMP)?.humanValue)
+      lastSeenComplete: this.formatUnixTimestamp(tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_LAST_SEEN_COMP)?.humanValue),
+      partStatus: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_PART_STATUS)?.value,
+      gapStatus: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_GAP_STATUS)?.value
     }));
 
     return downloadQueue;
