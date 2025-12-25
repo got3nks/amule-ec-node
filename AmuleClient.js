@@ -415,6 +415,56 @@ class AmuleClient {
     return response.opcode==1;
   }
 
+  async pauseDownload(fileHash) {
+    if (DEBUG) {
+      console.log("[DEBUG] Requesting pause for file:", fileHash);
+    }
+
+    const reqTags = [
+      this.session.createTag(
+        EC_TAGS.EC_TAG_PARTFILE,
+        EC_TAG_TYPES.EC_TAGTYPE_HASH16,
+        fileHash
+      )
+    ];
+
+    const response = await this.session.sendPacket(
+      EC_OPCODES.EC_OP_PARTFILE_PAUSE,
+      reqTags
+    );
+
+    if (DEBUG) {
+      console.log("[DEBUG] Received response:", response);
+    }
+
+    return response.opcode==1;
+  }
+
+  async resumeDownload(fileHash) {
+    if (DEBUG) {
+      console.log("[DEBUG] Requesting resume for file:", fileHash);
+    }
+
+    const reqTags = [
+      this.session.createTag(
+        EC_TAGS.EC_TAG_PARTFILE,
+        EC_TAG_TYPES.EC_TAGTYPE_HASH16,
+        fileHash
+      )
+    ];
+
+    const response = await this.session.sendPacket(
+      EC_OPCODES.EC_OP_PARTFILE_RESUME,
+      reqTags
+    );
+
+    if (DEBUG) {
+      console.log("[DEBUG] Received response:", response);
+    }
+
+    return response.opcode==1;
+  }
+
   // Category Management Methods
 
   async getCategories() {
