@@ -206,6 +206,7 @@ class AmuleClient {
     const downloadQueue = response.tags.map(tag => ({
       fileName: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_NAME)?.humanValue,
       fileHash: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_HASH)?.humanValue,
+      status: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_STATUS)?.humanValue,
       fileSize: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SIZE_FULL)?.humanValue,
       fileSizeDownloaded: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SIZE_DONE)?.humanValue,
       progress: ((tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SIZE_DONE)?.humanValue / tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SIZE_FULL)?.humanValue) * 100).toFixed(2),
