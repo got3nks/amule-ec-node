@@ -199,7 +199,6 @@ class AmuleClient {
     
     // Send request
     const response = await this.session.sendPacket(EC_OPCODES.EC_OP_SHAREDFILES_RELOAD, []);
-    console.dir(response,{depth:null});
 
     if (DEBUG) console.log("[DEBUG] Received response:", response);
 
