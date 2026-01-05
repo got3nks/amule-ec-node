@@ -194,6 +194,18 @@ class AmuleClient {
     return sharedFiles;
   }
 
+  async refreshSharedFiles() {
+    if (DEBUG) console.log("[DEBUG] Refreshing shared files...");
+    
+    // Send request
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_SHAREDFILES_RELOAD, []);
+    console.dir(response,{depth:null});
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    return response.opcode==1;
+  }
+
   async getDownloadQueue() {
     if (DEBUG) console.log("[DEBUG] Requesting downloaded files...");
     
@@ -220,7 +232,8 @@ class AmuleClient {
       lastSeenComplete: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_LAST_SEEN_COMP)?.humanValue,
       partStatus: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_PART_STATUS)?.value,
       gapStatus: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_GAP_STATUS)?.value,
-      reqStatus: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_REQ_STATUS)?.value
+      reqStatus: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_REQ_STATUS)?.value,
+      raw: this.buildTagTree(tag.children) // also return the unparsed object
     }));
 
     return downloadQueue;
