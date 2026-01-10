@@ -188,7 +188,8 @@ class AmuleClient {
       acceptedCount: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_ACCEPT_COUNT)?.humanValue,
       acceptedCountTotal: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_ACCEPT_COUNT_ALL)?.humanValue,
       priority: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_PRIO)?.humanValue,
-      path: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_FILENAME)?.humanValue
+      path: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_FILENAME)?.humanValue,
+      raw: this.buildTagTree(tag.children) // also return the unparsed object
     }));
 
     return sharedFiles;
