@@ -13,8 +13,8 @@ const {
 const DEBUG = false;
 
 class AmuleClient {
-  constructor(host, port, password) {
-    this.session = new ECProtocol(host, port, password);
+  constructor(host, port, password, options = {}) {
+    this.session = new ECProtocol(host, port, password, options);
   }
 
   async connect() {
