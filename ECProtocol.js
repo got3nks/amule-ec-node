@@ -13,7 +13,7 @@ const {
 const DEBUG = false;
 
 class ECProtocol {
-  constructor(host = HOST, port = PORT, password = PASSWORD) {
+  constructor(host = HOST, port = PORT, password = PASSWORD, options = {}) {
     this.host = host;
     this.port = port;
     this.password = password;
@@ -22,6 +22,8 @@ class ECProtocol {
     this.manualClose = false;
     this.reconnecting = false;
     this.pendingRequests = [];
+    // Per-request timeout in ms (0 = disabled). Default 30s.
+    this.requestTimeout = options.requestTimeout !== undefined ? options.requestTimeout : 30000;
   }
 
   async connect() {
@@ -250,12 +252,17 @@ class ECProtocol {
 
   /*
    * Send a packet to the server and resolve with the parsed reply.
+   * Rejects with a timeout error if no complete response arrives
+   * within this.requestTimeout ms (0 = no timeout).
    */
   async sendPacket(opcode, tags = []) {
     return new Promise((resolve, reject) => {
       let buffer = Buffer.alloc(0);
+      let timer = null;
+      let settled = false;
 
       const cleanup = () => {
+        if (timer) { clearTimeout(timer); timer = null; }
         const index = this.pendingRequests.findIndex(r => r.onData === onData);
         if (index !== -1) {
           this.pendingRequests.splice(index, 1);
@@ -280,6 +287,7 @@ class ECProtocol {
             return; // Wait for more data
           }
 
+          settled = true;
           cleanup();
 
           // Process the full packet
@@ -288,6 +296,7 @@ class ECProtocol {
 
           resolve(parsed);
         } catch (err) {
+          settled = true;
           cleanup();
           reject(err);
         }
@@ -298,12 +307,25 @@ class ECProtocol {
         if (!this.socket || this.socket.destroyed) {
           throw new Error("Socket is not connected");
         }
-        
+
         const packet = this.buildPacket(opcode, tags);
         this.pendingRequests.push({ resolve, reject, onData });
         this.socket.on("data", onData);
         this.socket.write(packet);
+
+        // Start timeout if configured
+        if (this.requestTimeout > 0) {
+          timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            const opcodeStr = this.getKeyByValue(EC_OPCODES, opcode);
+            reject(new Error(`Request timed out after ${this.requestTimeout}ms (opcode: ${opcodeStr})`));
+          }, this.requestTimeout);
+        }
       } catch (err) {
+        settled = true;
+        cleanup();
         reject(err);
       }
     });
