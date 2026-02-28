@@ -440,7 +440,8 @@ class ECProtocol {
     } else if (tagType === EC_TAG_TYPES.EC_TAGTYPE_UINT128) {
       humanValue = tagValue.readBigUInt64BE(0).toString() + tagValue.readBigUInt64BE(8).toString();
     } else if (tagType === EC_TAG_TYPES.EC_TAGTYPE_STRING) {
-      humanValue = tagValue.toString('utf8').replace(/\0+$/, '');
+      const s = tagValue.toString('utf8').replace(/\0+$/, '');
+      humanValue = fixUtf8String(s);
     } else if (tagType === EC_TAG_TYPES.EC_TAGTYPE_DOUBLE) {
       humanValue = parseFloat(tagValue.toString('utf8').replace(/\0+$/, ''));
     } else if (tagType === EC_TAG_TYPES.EC_TAGTYPE_HASH16) {
@@ -540,6 +541,27 @@ class ECProtocol {
     }
   }
 
+}
+
+function fixUtf8String(str) {
+    if (typeof str !== 'string' || str === '') {
+        return str;
+    }
+    const fragments = [];
+    const len = str.length;
+    for (let i = 0; i < len;) {
+        const start = i;
+        if (str.charCodeAt(i) <= 255) {
+            while (i < len && str.charCodeAt(i) <= 255) i++;
+            const s1 = str.slice(start, i);
+            const s2 = Buffer.from(s1, 'latin1').toString();
+            fragments.push(s2.length < s1.length ? s2 : s1);
+        } else {
+            while (i < len && str.charCodeAt(i) > 255) i++;
+            fragments.push(str.slice(start, i))
+        }
+    }
+    return fragments.join('');
 }
 
 module.exports = ECProtocol;
