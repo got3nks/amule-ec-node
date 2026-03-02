@@ -440,8 +440,13 @@ class ECProtocol {
     } else if (tagType === EC_TAG_TYPES.EC_TAGTYPE_UINT128) {
       humanValue = tagValue.readBigUInt64BE(0).toString() + tagValue.readBigUInt64BE(8).toString();
     } else if (tagType === EC_TAG_TYPES.EC_TAGTYPE_STRING) {
-      const s = tagValue.toString('utf8').replace(/\0+$/, '');
-      humanValue = fixUtf8String(s);
+      let prev = tagValue.toString('utf8').replace(/\0+$/, '');
+      let cur = fixUtf8String(prev);
+      while (cur.length < prev.length) {
+        prev = cur;
+        cur = fixUtf8String(prev);
+      }
+      humanValue = cur;
     } else if (tagType === EC_TAG_TYPES.EC_TAGTYPE_DOUBLE) {
       humanValue = parseFloat(tagValue.toString('utf8').replace(/\0+$/, ''));
     } else if (tagType === EC_TAG_TYPES.EC_TAGTYPE_HASH16) {
