@@ -437,6 +437,50 @@ const EC_TAG_TYPES = {
   EC_TAGTYPE_UINT128:10
 }
 
+// Source origin enum (from aMule Constants.h ESourceFrom)
+const EC_SOURCE_FROM = {
+  SF_NONE: 0,
+  SF_LOCAL_SERVER: 1,
+  SF_REMOTE_SERVER: 2,
+  SF_KADEMLIA: 3,
+  SF_SOURCE_EXCHANGE: 4,
+  SF_PASSIVE: 5,
+  SF_LINK: 6,
+  SF_SOURCE_SEEDS: 7,
+  SF_SEARCH_RESULT: 8
+};
+
+// Download states (from aMule Constants.h EDownloadState)
+const EC_DOWNLOAD_STATE = {
+  DS_DOWNLOADING: 0,
+  DS_ONQUEUE: 1,
+  DS_CONNECTED: 2,
+  DS_CONNECTING: 3,
+  DS_WAITCALLBACK: 4,
+  DS_REQHASHSET: 5,
+  DS_NONEEDEDPARTS: 6,
+  DS_TOOMANYCONNS: 7,
+  DS_TOOMANYCONNSIP: 8,
+  DS_LOWTOLOWIP: 9,
+  DS_BANNED: 10,
+  DS_ERROR: 11,
+  DS_WAITCALLBACKKAD: 12,
+  DS_NONE: 13,
+};
+
+// Upload states (from aMule Constants.h EUploadState)
+const EC_UPLOAD_STATE = {
+  US_UPLOADING: 0,
+  US_ONUPLOADQUEUE: 1,
+  US_WAITCALLBACK: 2,
+  US_CONNECTING: 3,
+  US_PENDING: 4,
+  US_LOWTOLOWIP: 5,
+  US_BANNED: 6,
+  US_ERROR: 7,
+  US_NONE: 8,
+};
+
 module.exports = {
   PROTOCOL_VERSION,
   EC_FLAGS,
@@ -446,5 +490,8 @@ module.exports = {
   EC_SEARCH_TYPE,
   EC_VALUE_TYPE,
   EC_PREFS,
-  EC_TAG_TYPES
+  EC_TAG_TYPES,
+  EC_SOURCE_FROM,
+  EC_DOWNLOAD_STATE,
+  EC_UPLOAD_STATE
 };
