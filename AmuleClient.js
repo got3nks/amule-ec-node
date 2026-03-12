@@ -269,10 +269,14 @@ class AmuleClient {
 
     if (DEBUG) console.log("[DEBUG] Received response:", response);
 
-    return response.tags.map(tag => ({
-      ...this._parseDownloadFields(tag),
-      raw: this.buildTagTree(tag.children)
-    }));
+    return response.tags.map(tag => {
+      const fields = this._parseDownloadFields(tag);
+      // Decode buffer fields (full data, no XOR — use ecid=0 as throwaway state)
+      this._reconstructBufferFields(0, fields);
+      if (this._ecBufferState) this._ecBufferState.delete(0);
+      fields.raw = this.buildTagTree(tag.children);
+      return fields;
+    });
   }
 
   /**
@@ -321,6 +325,8 @@ class AmuleClient {
       seenDownloads.add(ecid);
       const existing = this._updateState.downloads.get(ecid) || { ecid };
       const updates = this._parseDownloadFields(tag);
+      // RLE-decode + XOR-reconstruct buffer fields (partStatus, gapStatus, reqStatus)
+      this._reconstructBufferFields(ecid, updates);
       // Merge raw tag tree incrementally (preserves fields from prior full update)
       updates.raw = this.deepMergeRaw(existing.raw || {}, this.buildTagTree(tag.children));
       const merged = { ...existing, ...updates };
@@ -335,6 +341,7 @@ class AmuleClient {
       if (!seenDownloads.has(ecid)) {
         if (DEBUG) console.log(`[DEBUG] Removing stale download ecid=${ecid}`);
         this._updateState.downloads.delete(ecid);
+        if (this._ecBufferState) this._ecBufferState.delete(ecid);
       }
     }
 
@@ -939,9 +946,9 @@ class AmuleClient {
         case EC_TAGS.EC_TAG_PARTFILE_CAT:                     result.category = val || 0; break;
         case EC_TAGS.EC_TAG_PARTFILE_LAST_SEEN_COMP:          result.lastSeenComplete = val; break;
         case EC_TAGS.EC_TAG_PARTFILE_ED2K_LINK:               result.ed2kLink = val; break;
-        case EC_TAGS.EC_TAG_PARTFILE_PART_STATUS:             result.partStatus = sub.value; break;
-        case EC_TAGS.EC_TAG_PARTFILE_GAP_STATUS:              result.gapStatus = sub.value; break;
-        case EC_TAGS.EC_TAG_PARTFILE_REQ_STATUS:              result.reqStatus = sub.value; break;
+        case EC_TAGS.EC_TAG_PARTFILE_PART_STATUS:             result._rawPartStatus = sub.value; break;
+        case EC_TAGS.EC_TAG_PARTFILE_GAP_STATUS:              result._rawGapStatus = sub.value; break;
+        case EC_TAGS.EC_TAG_PARTFILE_REQ_STATUS:              result._rawReqStatus = sub.value; break;
       }
     }
 
@@ -951,6 +958,167 @@ class AmuleClient {
     }
 
     return result;
+  }
+
+  /**
+   * Reconstruct EC buffer fields (partStatus, gapStatus, reqStatus) for a download.
+   * aMule's EC_OP_GET_UPDATE sends RLE-compressed XOR diffs for these fields.
+   * We must: RLE-decode → XOR with previous state → store → decode to usable format.
+   * @param {number} ecid - Download ECID for state tracking
+   * @param {Object} fields - Parsed fields from _parseDownloadFields (may contain _raw* fields)
+   * @private
+   */
+  _reconstructBufferFields(ecid, fields) {
+    if (!this._ecBufferState) this._ecBufferState = new Map();
+
+    const FIELDS = [
+      { raw: '_rawPartStatus', out: 'partStatus', uint64: false },
+      { raw: '_rawGapStatus',  out: 'gapStatus',  uint64: true },
+      { raw: '_rawReqStatus',  out: 'reqStatus',   uint64: true },
+    ];
+
+    for (const { raw, out, uint64 } of FIELDS) {
+      if (!fields[raw]) continue;
+
+      // Step 1: RLE-decode the incoming buffer
+      const decoded = AmuleClient._decodeRLE(fields[raw]);
+
+      // Step 2: XOR-reconstruct with previous state
+      // aMule's RLE_Data XOR-diffs against the previous interleaved buffer.
+      // When the gap count changes, the buffer size changes too. aMule
+      // zero-extends (grow) or truncates (shrink) the old buffer before XOR,
+      // so the diff is always the new size. We XOR overlapping bytes with
+      // prev and treat the rest as raw (XOR with implied zeros = identity).
+      const state = this._ecBufferState.get(ecid) || {};
+      const prev = state[out];
+      let current;
+      let xorApplied = false;
+      if (prev) {
+        current = Buffer.from(decoded); // copy decoded
+        const overlapLen = Math.min(decoded.length, prev.length);
+        for (let i = 0; i < overlapLen; i++) {
+          current[i] = decoded[i] ^ prev[i];
+        }
+        // Bytes beyond overlapLen stay as decoded[i] (XOR with zero = identity)
+        xorApplied = true;
+      } else {
+        // First update — no previous state, decoded IS the full data
+        current = decoded;
+      }
+
+      if (DEBUG) {
+        const nonZeroDecoded = Array.from(decoded).filter(b => b !== 0).length;
+        const nonZeroCurrent = Array.from(current).filter(b => b !== 0).length;
+        console.log(`[EC-RECONSTRUCT] ecid=${ecid} field=${out}: raw=${fields[raw].length}B → rle=${decoded.length}B → xor=${xorApplied} (prev=${prev ? prev.length + 'B' : 'none'}) → current=${current.length}B (nonzero: decoded=${nonZeroDecoded}, current=${nonZeroCurrent})`);
+      }
+
+      // Step 3: Store reconstructed interleaved bytes for next XOR
+      state[out] = current;
+      this._ecBufferState.set(ecid, state);
+
+      // Step 4: Decode to usable format
+      if (uint64) {
+        fields[out] = AmuleClient._decodeInterleavedUint64Pairs(current);
+      } else {
+        // partStatus: each byte is a source count
+        fields[out] = Array.from(current);
+      }
+
+      if (DEBUG && uint64 && fields[out].length > 0) {
+        console.log(`[EC-RECONSTRUCT]   → ${fields[out].length} pairs, first 3:`, fields[out].slice(0, 3));
+      }
+
+      // Clean up raw field
+      delete fields[raw];
+    }
+  }
+
+  /**
+   * Decode RLE-compressed buffer (aMule EC protocol format).
+   * Format: [value, value, count] = repeat value count times; single values pass through.
+   * @param {Buffer} buff - RLE-encoded buffer
+   * @returns {Buffer} Decoded buffer
+   * @static
+   */
+  static _decodeRLE(buff) {
+    if (!buff || buff.length === 0) return Buffer.alloc(0);
+
+    // First pass: calculate output size
+    let outputSize = 0;
+    let i = 0;
+    while (i < buff.length) {
+      if (i + 1 < buff.length && buff[i + 1] === buff[i]) {
+        if (i + 2 < buff.length) {
+          outputSize += buff[i + 2];
+          i += 3;
+        } else {
+          outputSize += 2;
+          i += 2;
+        }
+      } else {
+        outputSize++;
+        i++;
+      }
+    }
+
+    // Second pass: decode
+    const output = Buffer.alloc(outputSize);
+    let outIdx = 0;
+    i = 0;
+    while (i < buff.length) {
+      if (i + 1 < buff.length && buff[i + 1] === buff[i]) {
+        if (i + 2 < buff.length) {
+          const val = buff[i];
+          const count = buff[i + 2];
+          output.fill(val, outIdx, outIdx + count);
+          outIdx += count;
+          i += 3;
+        } else {
+          output[outIdx++] = buff[i];
+          output[outIdx++] = buff[i + 1];
+          i += 2;
+        }
+      } else {
+        output[outIdx++] = buff[i];
+        i++;
+      }
+    }
+
+    return output;
+  }
+
+  /**
+   * Decode interleaved column-major bytes into uint64 pairs [{start, end}].
+   * aMule stores uint64 values as byte-interleaved columns for better RLE compression.
+   * @param {Buffer} buf - Interleaved byte buffer
+   * @returns {Array<{start: number, end: number}>} Array of range pairs
+   * @static
+   */
+  static _decodeInterleavedUint64Pairs(buf) {
+    const numValues = Math.floor(buf.length / 8);
+    if (numValues === 0) return [];
+
+    const values = new Array(numValues);
+    for (let i = 0; i < numValues; i++) {
+      let value = 0n;
+      for (let j = 0; j < 8; j++) {
+        const byteIdx = i + j * numValues;
+        if (byteIdx < buf.length) {
+          // Little-endian: byte 0 is LSB, byte 7 is MSB
+          value |= BigInt(buf[byteIdx]) << BigInt(j * 8);
+        }
+      }
+      values[i] = Number(value);
+    }
+
+    // Pair up as (start, end) ranges
+    const ranges = [];
+    for (let i = 0; i < values.length; i += 2) {
+      if (i + 1 < values.length) {
+        ranges.push({ start: values[i], end: values[i + 1] });
+      }
+    }
+    return ranges;
   }
 
   /**
