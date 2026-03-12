@@ -13,6 +13,30 @@ const {
 
 const DEBUG = false;
 
+/**
+ * Deep merge for raw tag trees from incremental updates.
+ * When an incremental update sends a nested tag (e.g. EC_TAG_PARTFILE_SOURCE_NAMES)
+ * with only some child fields updated, a shallow merge would replace the entire
+ * nested object and lose unchanged fields. This deep merge preserves them.
+ * Arrays are always replaced (not merged) since they represent complete lists.
+ */
+function deepMergeRaw(existing, updates) {
+  const result = { ...existing };
+  for (const key of Object.keys(updates)) {
+    const newVal = updates[key];
+    const oldVal = result[key];
+    if (
+      newVal && typeof newVal === 'object' && !Array.isArray(newVal) &&
+      oldVal && typeof oldVal === 'object' && !Array.isArray(oldVal)
+    ) {
+      result[key] = deepMergeRaw(oldVal, newVal);
+    } else {
+      result[key] = newVal;
+    }
+  }
+  return result;
+}
+
 class AmuleClient {
   constructor(host, port, password, options = {}) {
     this.session = new ECProtocol(host, port, password, options);
@@ -278,13 +302,16 @@ class AmuleClient {
     }
 
     // Parse and merge downloads (EC_TAG_PARTFILE tags at root level)
+    // Collect ecids seen in this response for set-based reconciliation
+    const seenDownloads = new Set();
     for (const tag of response.tags) {
       if (tag.tagId !== EC_TAGS.EC_TAG_PARTFILE) continue;
       const ecid = tag.humanValue || tag.value;
+      seenDownloads.add(ecid);
       const existing = this._updateState.downloads.get(ecid) || { ecid };
       const updates = this._parseDownloadFields(tag);
       // Merge raw tag tree incrementally (preserves fields from prior full update)
-      updates.raw = { ...(existing.raw || {}), ...this.buildTagTree(tag.children) };
+      updates.raw = deepMergeRaw(existing.raw || {}, this.buildTagTree(tag.children));
       const merged = { ...existing, ...updates };
       // Recalculate progress after merge (incremental may update only one of the two size fields)
       if (merged.fileSize > 0 && merged.fileSizeDownloaded !== undefined) {
@@ -292,26 +319,51 @@ class AmuleClient {
       }
       this._updateState.downloads.set(ecid, merged);
     }
+    // Remove downloads no longer present in the response (completed/cancelled)
+    for (const ecid of this._updateState.downloads.keys()) {
+      if (!seenDownloads.has(ecid)) {
+        if (DEBUG) console.log(`[DEBUG] Removing stale download ecid=${ecid}`);
+        this._updateState.downloads.delete(ecid);
+      }
+    }
 
     // Parse and merge shared files (EC_TAG_KNOWNFILE tags at root level)
+    const seenSharedFiles = new Set();
     for (const tag of response.tags) {
       if (tag.tagId !== EC_TAGS.EC_TAG_KNOWNFILE) continue;
       const ecid = tag.humanValue || tag.value;
+      seenSharedFiles.add(ecid);
       const existing = this._updateState.sharedFiles.get(ecid) || { ecid };
       const updates = this._parseSharedFileFields(tag);
-      updates.raw = { ...(existing.raw || {}), ...this.buildTagTree(tag.children) };
+      updates.raw = deepMergeRaw(existing.raw || {}, this.buildTagTree(tag.children));
       this._updateState.sharedFiles.set(ecid, { ...existing, ...updates });
+    }
+    // Remove shared files no longer present (unshared)
+    for (const ecid of this._updateState.sharedFiles.keys()) {
+      if (!seenSharedFiles.has(ecid)) {
+        if (DEBUG) console.log(`[DEBUG] Removing stale shared file ecid=${ecid}`);
+        this._updateState.sharedFiles.delete(ecid);
+      }
     }
 
     // Parse and merge clients from EC_TAG_CLIENT container
     const clientContainer = response.tags.find(tag => tag.tagId === EC_TAGS.EC_TAG_CLIENT);
     if (clientContainer && clientContainer.children) {
+      const seenClients = new Set();
       const clientTags = clientContainer.children.filter(c => c.tagId === EC_TAGS.EC_TAG_CLIENT);
       for (const clientTag of clientTags) {
         const ecid = clientTag.humanValue || clientTag.value;
+        seenClients.add(ecid);
         const existing = this._updateState.clients.get(ecid) || { ecid };
         const updates = this._parseClientFields(clientTag);
         this._updateState.clients.set(ecid, { ...existing, ...updates });
+      }
+      // Remove disconnected clients no longer present
+      for (const ecid of this._updateState.clients.keys()) {
+        if (!seenClients.has(ecid)) {
+          if (DEBUG) console.log(`[DEBUG] Removing stale client ecid=${ecid}`);
+          this._updateState.clients.delete(ecid);
+        }
       }
     }
 
