@@ -1,6 +1,6 @@
 {
   "name": "amule-ec-node",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Node.js library for aMule External Connection (EC) protocol",
   "main": "AmuleClient.js",
   "scripts": {
