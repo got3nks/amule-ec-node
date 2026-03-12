@@ -14,230 +14,265 @@ const {
 const DEBUG = false;
 
 class AmuleClient {
+  /**
+   * @param {string} host - aMule EC hostname or IP address
+   * @param {number} port - aMule EC port (default 4712)
+   * @param {string} password - EC access password
+   * @param {Object} [options] - Additional options passed to ECProtocol
+   */
   constructor(host, port, password, options = {}) {
     this.session = new ECProtocol(host, port, password, options);
   }
 
+  /**
+   * Connect to aMule and authenticate.
+   */
   async connect() {
     await this.session.connect();
     await this.session.authenticate();
   }
 
+  /**
+   * Close the connection to aMule.
+   */
   close() {
     this.session.close();
   }
 
+  /**
+   * Check if an EC response indicates success (EC_OP_NOOP).
+   * @param {Object} response - Raw EC response
+   * @returns {boolean} True if the response opcode is EC_OP_NOOP (0x01)
+   * @private
+   */
+  _isSuccess(response) {
+    return response.opcode === EC_OPCODES.EC_OP_NOOP;
+  }
+
+  /**
+   * Send a command targeting a server by IP and port.
+   * @param {number} opcode - EC opcode to send
+   * @param {string} ip - Server IP address
+   * @param {number} port - Server port
+   * @returns {boolean} True if the command succeeded
+   * @private
+   */
+  async _sendServerCommand(opcode, ip, port) {
+    const reqTags = [
+      this.session.createTag(EC_TAGS.EC_TAG_SERVER, EC_TAG_TYPES.EC_TAGTYPE_IPV4, {ip, port})
+    ];
+    const response = await this.session.sendPacket(opcode, reqTags);
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+    return this._isSuccess(response);
+  }
+
+  /**
+   * Send a command targeting a file by hash.
+   * @param {number} opcode - EC opcode to send
+   * @param {string} fileHash - MD4 hash of the file
+   * @returns {boolean} True if the command succeeded
+   * @private
+   */
+  async _sendFileCommand(opcode, fileHash) {
+    const reqTags = [
+      this.session.createTag(EC_TAGS.EC_TAG_PARTFILE, EC_TAG_TYPES.EC_TAGTYPE_HASH16, fileHash)
+    ];
+    const response = await this.session.sendPacket(opcode, reqTags);
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+    return this._isSuccess(response);
+  }
+
+  /**
+   * Send a simple request and return the response as a tag tree.
+   * @param {number} opcode - EC opcode to send
+   * @returns {Object} Parsed tag tree
+   * @private
+   */
+  async _requestTagTree(opcode) {
+    const response = await this.session.sendPacket(opcode, []);
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+    return this.buildTagTree(response.tags);
+  }
+
+  /**
+   * Get the current connection state (ed2k server, Kad network).
+   * @returns {Object} Tag tree with connection state fields
+   */
   async getConnectionState() {
-    if (DEBUG) console.log("[DEBUG] Requesting connection state...");
-    
-    // Send request
-    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_CONNSTATE, []);
-
-    if (DEBUG) console.log("[DEBUG] Received response:", response);
-
-    return this.buildTagTree(response.tags);
+    return this._requestTagTree(EC_OPCODES.EC_OP_GET_CONNSTATE);
   }
 
+  /**
+   * Get aMule statistics (upload/download speed, shared file count, etc.).
+   * @returns {Object} Tag tree with stats fields
+   */
   async getStats() {
-    if (DEBUG) console.log("[DEBUG] Requesting stats...");
-    
-    // Send request
-    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_STAT_REQ, []);
-
-    if (DEBUG) console.log("[DEBUG] Received response:", response);
-
-    return this.buildTagTree(response.tags);
+    return this._requestTagTree(EC_OPCODES.EC_OP_STAT_REQ);
   }
-  
+
+  /**
+   * Get the full statistics tree (hierarchical stats with node IDs).
+   * @returns {Object} Tag tree with nested stats
+   */
   async getStatsTree() {
-    if (DEBUG) console.log("[DEBUG] Requesting stats tree...");
-    
-    // Send request
-    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_STATSTREE, []);
-
-    if (DEBUG) console.log("[DEBUG] Received response:", response);
-
-    return this.buildTagTree(response.tags);
+    return this._requestTagTree(EC_OPCODES.EC_OP_GET_STATSTREE);
   }
 
+  /**
+   * Get ed2k server info (message of the day, etc.).
+   * @returns {Object} Tag tree with server info
+   */
   async getServerInfo() {
-    if (DEBUG) console.log("[DEBUG] Requesting server info...");
-    
-    // Send request
-    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_SERVERINFO, []);
-
-    if (DEBUG) console.log("[DEBUG] Received response:", response);
-
-    return this.buildTagTree(response.tags);
+    return this._requestTagTree(EC_OPCODES.EC_OP_GET_SERVERINFO);
   }
 
+  /**
+   * Get aMule log messages.
+   * @returns {Object} Tag tree with log entries
+   */
   async getLog() {
-    if (DEBUG) console.log("[DEBUG] Requesting logs...");
-    
-    // Send request
-    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_LOG, []);
-
-    if (DEBUG) console.log("[DEBUG] Received response:", response);
-
-    return this.buildTagTree(response.tags);
+    return this._requestTagTree(EC_OPCODES.EC_OP_GET_LOG);
   }
 
+  /**
+   * Get aMule debug log messages.
+   * @returns {Object} Tag tree with debug log entries
+   */
   async getDebugLog() {
-    if (DEBUG) console.log("[DEBUG] Requesting debug logs...");
-    
-    // Send request
-    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_DEBUGLOG, []);
-
-    if (DEBUG) console.log("[DEBUG] Received response:", response);
-
-    return this.buildTagTree(response.tags);
+    return this._requestTagTree(EC_OPCODES.EC_OP_GET_DEBUGLOG);
   }
 
+  /**
+   * Get the list of ed2k servers.
+   * @returns {Object} Tag tree with server entries
+   */
   async getServerList() {
-    if (DEBUG) console.log("[DEBUG] Requesting server list...");
-    
-    // Send request
-    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_SERVER_LIST, []);
-
-    if (DEBUG) console.log("[DEBUG] Received response:", response);
-
-    return this.buildTagTree(response.tags);
+    return this._requestTagTree(EC_OPCODES.EC_OP_GET_SERVER_LIST);
   }
 
+  /**
+   * Remove an ed2k server from the server list.
+   * @param {string} ip - Server IP address
+   * @param {number} port - Server port
+   * @returns {boolean} True if the server was removed successfully
+   */
   async removeServer(ip, port) {
-    if (DEBUG) console.log("[DEBUG] Removing server...");
-
-    const reqTags = [
-      this.session.createTag(
-        EC_TAGS.EC_TAG_SERVER,
-        EC_TAG_TYPES.EC_TAGTYPE_IPV4,
-        {ip, port}
-      )
-    ];
-    
-    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_SERVER_REMOVE, reqTags);
-
-    if (DEBUG) console.log("[DEBUG] Received response:", response);
-
-    return response.opcode==1;
+    return this._sendServerCommand(EC_OPCODES.EC_OP_SERVER_REMOVE, ip, port);
   }
 
+  /**
+   * Connect to an ed2k server.
+   * @param {string} ip - Server IP address
+   * @param {number} port - Server port
+   * @returns {boolean} True if connection was initiated successfully
+   */
   async connectServer(ip, port) {
-    if (DEBUG) console.log("[DEBUG] Connecting to server...");
-
-    const reqTags = [
-      this.session.createTag(
-        EC_TAGS.EC_TAG_SERVER,
-        EC_TAG_TYPES.EC_TAGTYPE_IPV4,
-        {ip, port}
-      )
-    ];
-    
-    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_SERVER_CONNECT, reqTags);
-
-    if (DEBUG) console.log("[DEBUG] Received response:", response);
-
-    return response.opcode==1;
+    return this._sendServerCommand(EC_OPCODES.EC_OP_SERVER_CONNECT, ip, port);
   }
 
+  /**
+   * Disconnect from an ed2k server.
+   * @param {string} ip - Server IP address
+   * @param {number} port - Server port
+   * @returns {boolean} True if disconnection was successful
+   */
   async disconnectServer(ip, port) {
-    if (DEBUG) console.log("[DEBUG] Disconnecting from server...");
-
-    const reqTags = [
-      this.session.createTag(
-        EC_TAGS.EC_TAG_SERVER,
-        EC_TAG_TYPES.EC_TAGTYPE_IPV4,
-        {ip, port}
-      )
-    ];
-    
-    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_SERVER_DISCONNECT, reqTags);
-
-    if (DEBUG) console.log("[DEBUG] Received response:", response);
-
-    return response.opcode==1;
+    return this._sendServerCommand(EC_OPCODES.EC_OP_SERVER_DISCONNECT, ip, port);
   }
 
+  /**
+   * Get the upload queue (clients waiting to download from us).
+   * @returns {Object} Tag tree with upload queue entries
+   */
   async getUploadingQueue() {
-    if (DEBUG) console.log("[DEBUG] Requesting upload queue...");
-    
-    // Send request
-    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_ULOAD_QUEUE, []);
-
-    if (DEBUG) console.log("[DEBUG] Received response:", response);
-
-    return this.buildTagTree(response.tags);
+    return this._requestTagTree(EC_OPCODES.EC_OP_GET_ULOAD_QUEUE);
   }
 
+  /**
+   * Get the full list of shared files (non-incremental).
+   * Unlike getUpdate(), this always returns the complete list.
+   * @returns {Object[]} Array of shared file objects with parsed fields
+   */
   async getSharedFiles() {
     if (DEBUG) console.log("[DEBUG] Requesting shared files...");
-    
-    // Send request
+
     const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_SHARED_FILES, []);
 
     if (DEBUG) console.log("[DEBUG] Received response:", response);
 
-    // Parse response data into structured JS object
-    const sharedFiles = response.tags.map(tag => ({
-      fileName: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_NAME)?.humanValue,
-      fileHash: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_HASH)?.humanValue,
-      fileSize: Number(tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SIZE_FULL)?.humanValue),
-      transferred: Number(tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_XFERRED)?.humanValue),
-      transferredTotal: Number(tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_XFERRED_ALL)?.humanValue),
-      reqCount: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_REQ_COUNT)?.humanValue,
-      reqCountTotal: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_REQ_COUNT_ALL)?.humanValue,
-      acceptedCount: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_ACCEPT_COUNT)?.humanValue,
-      acceptedCountTotal: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_ACCEPT_COUNT_ALL)?.humanValue,
-      priority: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_PRIO)?.humanValue,
-      path: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_KNOWNFILE_FILENAME)?.humanValue,
-      raw: this.buildTagTree(tag.children) // also return the unparsed object
+    return response.tags.map(tag => ({
+      ...this._parseSharedFileFields(tag),
+      raw: this.buildTagTree(tag.children)
     }));
-
-    return sharedFiles;
   }
 
+  /**
+   * Clear completed downloads from aMule's download list.
+   * Sends EC_OP_CLEAR_COMPLETED with EC_TAG_ECID children for each ecid to clear.
+   *
+   * @param {number[]} [ecids] - Specific ecids to clear. If omitted, clears all
+   *   downloads at 100% from the internal _updateState cache.
+   * @returns {{ opcode: number, cleared: number[] }} Response opcode and list of ecids sent.
+   */
+  async clearCompleted(ecids) {
+    if (DEBUG) console.log("[DEBUG] Clearing completed downloads...");
+
+    // If no ecids specified, find all completed downloads from cache
+    if (!ecids) {
+      ecids = [];
+      if (this._updateState) {
+        for (const [ecid, dl] of this._updateState.downloads) {
+          if (parseFloat(dl.progress) >= 100) {
+            ecids.push(ecid);
+          }
+        }
+      }
+    }
+
+    if (ecids.length === 0) {
+      if (DEBUG) console.log("[DEBUG] No completed downloads to clear");
+      return { opcode: 0, cleared: [] };
+    }
+
+    const tags = ecids.map(ecid =>
+      this.session.createTag(EC_TAGS.EC_TAG_ECID, EC_TAG_TYPES.EC_TAGTYPE_UINT32, ecid)
+    );
+
+    if (DEBUG) console.log(`[DEBUG] Sending EC_OP_CLEAR_COMPLETED with ${tags.length} ecid(s):`, ecids);
+
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_CLEAR_COMPLETED, tags);
+
+    if (DEBUG) console.log("[DEBUG] Clear completed response opcode:", response.opcode);
+
+    return { opcode: response.opcode, cleared: ecids };
+  }
+
+  /**
+   * Tell aMule to reload its shared files from disk.
+   * @returns {boolean} True if the reload was initiated successfully
+   */
   async refreshSharedFiles() {
-    if (DEBUG) console.log("[DEBUG] Refreshing shared files...");
-    
-    // Send request
     const response = await this.session.sendPacket(EC_OPCODES.EC_OP_SHAREDFILES_RELOAD, []);
-
     if (DEBUG) console.log("[DEBUG] Received response:", response);
-
-    return response.opcode==1;
+    return this._isSuccess(response);
   }
 
+  /**
+   * Get the full download queue (non-incremental).
+   * Unlike getUpdate(), this always returns the complete list.
+   * @returns {Object[]} Array of download objects with parsed fields
+   */
   async getDownloadQueue() {
     if (DEBUG) console.log("[DEBUG] Requesting downloaded files...");
-    
-    // Send request
+
     const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_DLOAD_QUEUE, []);
 
     if (DEBUG) console.log("[DEBUG] Received response:", response);
 
-    // Parse response data into structured JS object
-    const downloadQueue = response.tags.map(tag => ({
-      fileName: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_NAME)?.humanValue,
-      fileHash: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_HASH)?.humanValue,
-      status: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_STATUS)?.humanValue,
-      fileSize: Number(tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SIZE_FULL)?.humanValue),
-      fileSizeDownloaded: Number(tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SIZE_DONE)?.humanValue),
-      progress: ((Number(tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SIZE_DONE)?.humanValue) / Number(tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SIZE_FULL)?.humanValue)) * 100).toFixed(2),
-      sourceCount: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SOURCE_COUNT)?.humanValue,
-      sourceCountNotCurrent: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SOURCE_COUNT_NOT_CURRENT)?.humanValue,
-      sourceCountXfer: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SOURCE_COUNT_XFER)?.humanValue,
-      sourceCountA4AF: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SOURCE_COUNT_A4AF)?.humanValue,
-      speed: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SPEED)?.humanValue,
-      priority: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_PRIO)?.humanValue,
-      category: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_CAT)?.humanValue || 0,
-      lastSeenComplete: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_LAST_SEEN_COMP)?.humanValue,
-      partStatus: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_PART_STATUS)?.value,
-      gapStatus: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_GAP_STATUS)?.value,
-      reqStatus: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_REQ_STATUS)?.value,
-      raw: this.buildTagTree(tag.children) // also return the unparsed object
+    return response.tags.map(tag => ({
+      ...this._parseDownloadFields(tag),
+      raw: this.buildTagTree(tag.children)
     }));
-
-    return downloadQueue;
   }
 
   /**
@@ -303,6 +338,28 @@ class AmuleClient {
       }
     }
 
+    // Track completed downloads for clearCompleted.
+    // aMule keeps completed downloads in the PARTFILE list until cleared via
+    // EC_OP_CLEAR_COMPLETED. Clearing triggers RenewECID(), which causes the
+    // next getUpdate() to return the file as a new KNOWNFILE (shared file).
+    // We wait for status 9 (PS_COMPLETE) before clearing, since status 8
+    // (PS_COMPLETING) means aMule is still hashing/moving the file.
+    if (!this._completedHashes) this._completedHashes = new Set();
+    if (!this._pendingClear) this._pendingClear = new Map(); // hash → ecid
+
+    for (const dl of this._updateState.downloads.values()) {
+      if (parseFloat(dl.progress) >= 100 && dl.fileHash) {
+        if (!this._completedHashes.has(dl.fileHash)) {
+          this._completedHashes.add(dl.fileHash);
+          if (DEBUG) console.log(`[DEBUG] Download completed: hash=${dl.fileHash}, name=${dl.fileName}, status=${dl.status}`);
+        }
+        // Queue for clearing (will be sent when status reaches PS_COMPLETE)
+        if (!this._pendingClear.has(dl.fileHash)) {
+          this._pendingClear.set(dl.fileHash, dl.ecid);
+        }
+      }
+    }
+
     // Parse and merge shared files (EC_TAG_KNOWNFILE tags at root level)
     const seenSharedFiles = new Set();
     for (const tag of response.tags) {
@@ -319,6 +376,40 @@ class AmuleClient {
       if (!seenSharedFiles.has(ecid)) {
         if (DEBUG) console.log(`[DEBUG] Removing stale shared file ecid=${ecid}`);
         this._updateState.sharedFiles.delete(ecid);
+      }
+    }
+
+    // Clear completed downloads that have reached PS_COMPLETE (status 9).
+    // This removes them from the download list and triggers RenewECID(),
+    // causing the next getUpdate() to return them as new KNOWNFILEs.
+    if (this._pendingClear.size > 0) {
+      const ecidsToClear = [];
+      const hashesToRemove = [];
+
+      for (const [hash, ecid] of this._pendingClear) {
+        const dl = [...this._updateState.downloads.values()].find(d => d.fileHash === hash);
+        if (!dl) {
+          // Download already gone (cleared externally or by aMule)
+          hashesToRemove.push(hash);
+        } else if (dl.status === 9) {
+          // PS_COMPLETE — ready to clear
+          ecidsToClear.push(ecid);
+          hashesToRemove.push(hash);
+          if (DEBUG) console.log(`[DEBUG] Clearing completed download: hash=${hash}, ecid=${ecid}`);
+        }
+        // status 8 (PS_COMPLETING) — keep waiting
+      }
+
+      for (const hash of hashesToRemove) {
+        this._pendingClear.delete(hash);
+      }
+
+      if (ecidsToClear.length > 0) {
+        try {
+          await this.clearCompleted(ecidsToClear);
+        } catch (err) {
+          if (DEBUG) console.log(`[DEBUG] Failed to clear completed:`, err.message);
+        }
       }
     }
 
@@ -350,6 +441,14 @@ class AmuleClient {
     };
   }
 
+  /**
+   * Start a search on the specified network.
+   * @param {string} query - Search query string
+   * @param {number} network - Network type (EC_SEARCH_TYPE value)
+   * @param {string|null} [extension] - Optional file extension filter
+   * @returns {Object[]} Raw response tags
+   * @private
+   */
   async _search(query, network, extension=null) {
     if (DEBUG) console.log("[DEBUG] Requesting search...");
 
@@ -387,6 +486,11 @@ class AmuleClient {
     return response.tags;
   }
 
+  /**
+   * Get the progress status of an ongoing search.
+   * @returns {Object[]} Raw response tags with search progress
+   * @private
+   */
   async _getSearchRequestStatus() {
     if (DEBUG) console.log("[DEBUG] Requesting search request status...");
     
@@ -398,27 +502,30 @@ class AmuleClient {
     return response.tags;
   }
 
+  /**
+   * Get the results of a completed search.
+   * @returns {{ resultsLength: number, results: Object[] }} Search results sorted by source count
+   */
   async getSearchResults() {
-    if (DEBUG) console.log("[DEBUG] Requesting search request status...");
-    
-    // Send request
+    if (DEBUG) console.log("[DEBUG] Requesting search results...");
+
     const response = await this.session.sendPacket(EC_OPCODES.EC_OP_SEARCH_RESULTS, []);
 
     if (DEBUG) console.log("[DEBUG] Received response:", response);
 
-    // Fetch results and parse them
-    let results =  response.tags.map(tag => ({
-      fileName: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_NAME)?.humanValue,
-      fileHash: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_HASH)?.humanValue,
-      fileSize: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SIZE_FULL)?.humanValue,
-      sourceCount: tag.children.find(child => child.tagId === EC_TAGS.EC_TAG_PARTFILE_SOURCE_COUNT)?.humanValue,
-    }));
-
+    const results = response.tags.map(tag => this._parseDownloadFields(tag));
     results.sort((a, b) => (b.sourceCount || 0) - (a.sourceCount || 0));
 
-    return { resultsLength: results.length, results: results };
+    return { resultsLength: results.length, results };
   }
 
+  /**
+   * Start a search and poll until results are ready (up to 120s timeout).
+   * @param {string} query - Search query string
+   * @param {string|number} network - Network type: 'global', 'local', 'kad', or EC_SEARCH_TYPE value
+   * @param {string} [extension] - Optional file extension filter
+   * @returns {{ resultsLength: number, results: Object[] }} Search results sorted by source count
+   */
   async searchAndWaitResults(query, network, extension) {
     const timeoutMs = 120000;
     const intervalMs = 1000;
@@ -468,6 +575,12 @@ class AmuleClient {
     return this.getSearchResults?.() ?? null;
   }
 
+  /**
+   * Download a file from search results.
+   * @param {string} fileHash - MD4 hash of the file to download
+   * @param {number} [categoryId=0] - Category ID to assign (0 = default)
+   * @returns {boolean} True if the download was started successfully
+   */
   async downloadSearchResult(fileHash, categoryId = 0) {
     if (DEBUG) console.log("[DEBUG] Requesting download ",fileHash," from search result with category", categoryId, "...");
 
@@ -495,24 +608,21 @@ class AmuleClient {
     return response.opcode==6;
   }
 
-   async cancelDownload(fileHash) {
-    if (DEBUG) console.log("[DEBUG] Requesting delete file ",fileHash,"...");
-
-    const reqTags = [
-      this.session.createTag(
-        EC_TAGS.EC_TAG_PARTFILE,
-        EC_TAG_TYPES.EC_TAGTYPE_HASH16,
-        fileHash
-      )
-    ];
-    
-    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_PARTFILE_DELETE, reqTags);
-
-    if (DEBUG) console.log("[DEBUG] Received response:", response);
-
-    return response.opcode==1;
+  /**
+   * Cancel and delete a download.
+   * @param {string} fileHash - MD4 hash of the file to cancel
+   * @returns {boolean} True if the download was cancelled successfully
+   */
+  async cancelDownload(fileHash) {
+    return this._sendFileCommand(EC_OPCODES.EC_OP_PARTFILE_DELETE, fileHash);
   }
 
+  /**
+   * Add a download via ed2k:// link.
+   * @param {string} link - ed2k:// link
+   * @param {number} [categoryId=0] - Category ID to assign (0 = default)
+   * @returns {boolean} True if the link was added successfully
+   */
   async addEd2kLink(link, categoryId=0) {
     if (DEBUG) console.log("[DEBUG] Requesting ed2k link download ",link,"...");
 
@@ -537,61 +647,31 @@ class AmuleClient {
 
     if (DEBUG) console.log("[DEBUG] Received response:", response);
 
-    return response.opcode==1;
+    return this._isSuccess(response);
   }
 
+  /**
+   * Pause a download.
+   * @param {string} fileHash - MD4 hash of the file to pause
+   * @returns {boolean} True if the download was paused successfully
+   */
   async pauseDownload(fileHash) {
-    if (DEBUG) {
-      console.log("[DEBUG] Requesting pause for file:", fileHash);
-    }
-
-    const reqTags = [
-      this.session.createTag(
-        EC_TAGS.EC_TAG_PARTFILE,
-        EC_TAG_TYPES.EC_TAGTYPE_HASH16,
-        fileHash
-      )
-    ];
-
-    const response = await this.session.sendPacket(
-      EC_OPCODES.EC_OP_PARTFILE_PAUSE,
-      reqTags
-    );
-
-    if (DEBUG) {
-      console.log("[DEBUG] Received response:", response);
-    }
-
-    return response.opcode==1;
+    return this._sendFileCommand(EC_OPCODES.EC_OP_PARTFILE_PAUSE, fileHash);
   }
 
+  /**
+   * Resume a paused download.
+   * @param {string} fileHash - MD4 hash of the file to resume
+   * @returns {boolean} True if the download was resumed successfully
+   */
   async resumeDownload(fileHash) {
-    if (DEBUG) {
-      console.log("[DEBUG] Requesting resume for file:", fileHash);
-    }
-
-    const reqTags = [
-      this.session.createTag(
-        EC_TAGS.EC_TAG_PARTFILE,
-        EC_TAG_TYPES.EC_TAGTYPE_HASH16,
-        fileHash
-      )
-    ];
-
-    const response = await this.session.sendPacket(
-      EC_OPCODES.EC_OP_PARTFILE_RESUME,
-      reqTags
-    );
-
-    if (DEBUG) {
-      console.log("[DEBUG] Received response:", response);
-    }
-
-    return response.opcode==1;
+    return this._sendFileCommand(EC_OPCODES.EC_OP_PARTFILE_RESUME, fileHash);
   }
 
-  // Category Management Methods
-
+  /**
+   * Get all aMule categories.
+   * @returns {Object[]} Array of category objects with { id, title, path, comment, color, priority }
+   */
   async getCategories() {
     if (DEBUG) console.log("[DEBUG] Requesting categories...");
 
@@ -612,6 +692,15 @@ class AmuleClient {
     return this.parseCategories(response.tags);
   }
 
+  /**
+   * Create a new category in aMule.
+   * @param {string} title - Category name
+   * @param {string} [path=''] - Download path for this category
+   * @param {string} [comment=''] - Category comment
+   * @param {number} [color=0] - Category color in RGB format (0xRRGGBB)
+   * @param {number} [priority=0] - Download priority for this category
+   * @returns {{ success: boolean, categoryId: number|null }} Result with the new category ID
+   */
   async createCategory(title, path = '', comment = '', color = 0, priority = 0) {
     if (DEBUG) console.log("[DEBUG] Creating category:", title);
 
@@ -661,7 +750,7 @@ class AmuleClient {
 
     // Success if we got a valid category ID back (aMule created it)
     // OR if the opcode indicates success
-    const success = categoryId !== null || response.opcode === EC_OPCODES.EC_OP_NOOP || response.opcode === 0x01;
+    const success = categoryId !== null || this._isSuccess(response);
 
     if (DEBUG) console.log("[DEBUG] Category creation success:", success, "categoryId:", categoryId, "opcode:", response.opcode);
 
@@ -671,6 +760,16 @@ class AmuleClient {
     };
   }
 
+  /**
+   * Update an existing category in aMule.
+   * @param {number} categoryId - Category ID to update
+   * @param {string} title - Category name
+   * @param {string} path - Download path
+   * @param {string} comment - Category comment
+   * @param {number} color - Category color in RGB format (0xRRGGBB)
+   * @param {number} priority - Download priority
+   * @returns {boolean} True if the update was successful
+   */
   async updateCategory(categoryId, title, path, comment, color, priority) {
     if (DEBUG) console.log("[DEBUG] Updating category:", categoryId);
 
@@ -715,9 +814,14 @@ class AmuleClient {
 
     if (DEBUG) console.log("[DEBUG] Received response:", response);
 
-    return response.opcode === EC_OPCODES.EC_OP_NOOP || response.opcode === 0x01;
+    return this._isSuccess(response);
   }
 
+  /**
+   * Delete a category from aMule.
+   * @param {number} categoryId - Category ID to delete
+   * @returns {boolean} True if the deletion was successful
+   */
   async deleteCategory(categoryId) {
     if (DEBUG) console.log("[DEBUG] Deleting category:", categoryId);
 
@@ -733,9 +837,15 @@ class AmuleClient {
 
     if (DEBUG) console.log("[DEBUG] Received response:", response);
 
-    return response.opcode === EC_OPCODES.EC_OP_NOOP || response.opcode === 0x01;
+    return this._isSuccess(response);
   }
 
+  /**
+   * Assign a download to a category.
+   * @param {string} fileHash - MD4 hash of the file
+   * @param {number} categoryId - Category ID to assign
+   * @returns {boolean} True if the category was set successfully
+   */
   async setFileCategory(fileHash, categoryId) {
     if (DEBUG) console.log("[DEBUG] Setting file category:", fileHash, "->", categoryId);
 
@@ -760,11 +870,16 @@ class AmuleClient {
 
     if (DEBUG) console.log("[DEBUG] Received response:", response);
 
-    return response.opcode === EC_OPCODES.EC_OP_NOOP || response.opcode === 0x01;
+    return this._isSuccess(response);
   }
 
-  // File Rename
-
+  /**
+   * Rename a file (download or shared).
+   * Searches the download queue first, then known (shared) files.
+   * @param {string} fileHash - MD4 hash of the file to rename
+   * @param {string} newName - New filename
+   * @returns {{ success: boolean, error?: string }} Result with optional error message
+   */
   async renameFile(fileHash, newName) {
     if (DEBUG) console.log("[DEBUG] Renaming file:", fileHash, "->", newName);
 
@@ -793,16 +908,15 @@ class AmuleClient {
       return { success: false, error: errorMsg || 'Rename failed' };
     }
 
-    return { success: response.opcode === EC_OPCODES.EC_OP_NOOP || response.opcode === 0x01 };
+    return { success: this._isSuccess(response) };
   }
 
   /**
-   * Parse only the fields present in a client tag (for incremental merging).
-   * Returns an object with only the fields that were actually in the response.
-   */
-  /**
-   * Parse only the fields present in a download (EC_TAG_PARTFILE) tag.
-   * Returns an object with only the fields actually in the response.
+   * Parse fields from an EC_TAG_PARTFILE tag (for incremental merging).
+   * Only returns fields actually present in the response.
+   * @param {Object} tag - Raw EC tag
+   * @returns {Object} Parsed download fields
+   * @private
    */
   _parseDownloadFields(tag) {
     const result = {};
@@ -822,7 +936,7 @@ class AmuleClient {
         case EC_TAGS.EC_TAG_PARTFILE_SOURCE_COUNT_A4AF:       result.sourceCountA4AF = val; break;
         case EC_TAGS.EC_TAG_PARTFILE_SOURCE_COUNT_NOT_CURRENT: result.sourceCountNotCurrent = val; break;
         case EC_TAGS.EC_TAG_PARTFILE_PRIO:                    result.priority = val; break;
-        case EC_TAGS.EC_TAG_PARTFILE_CAT:                     result.category = val; break;
+        case EC_TAGS.EC_TAG_PARTFILE_CAT:                     result.category = val || 0; break;
         case EC_TAGS.EC_TAG_PARTFILE_LAST_SEEN_COMP:          result.lastSeenComplete = val; break;
         case EC_TAGS.EC_TAG_PARTFILE_ED2K_LINK:               result.ed2kLink = val; break;
         case EC_TAGS.EC_TAG_PARTFILE_PART_STATUS:             result.partStatus = sub.value; break;
@@ -840,8 +954,11 @@ class AmuleClient {
   }
 
   /**
-   * Parse only the fields present in a shared file (EC_TAG_KNOWNFILE) tag.
-   * Returns an object with only the fields actually in the response.
+   * Parse fields from an EC_TAG_KNOWNFILE tag (for incremental merging).
+   * Only returns fields actually present in the response.
+   * @param {Object} tag - Raw EC tag
+   * @returns {Object} Parsed shared file fields
+   * @private
    */
   _parseSharedFileFields(tag) {
     const result = {};
@@ -870,6 +987,13 @@ class AmuleClient {
     return result;
   }
 
+  /**
+   * Parse fields from an EC_TAG_CLIENT tag (for incremental merging).
+   * Only returns fields actually present in the response.
+   * @param {Object} clientTag - Raw EC tag
+   * @returns {Object} Parsed client/peer fields
+   * @private
+   */
   _parseClientFields(clientTag) {
     const result = {};
     if (!clientTag.children) return result;
@@ -931,9 +1055,11 @@ class AmuleClient {
 
 
 
-  /*
-      Helper functions
-  */
+  /**
+   * Parse category tags from an EC_OP_GET_PREFERENCES response.
+   * @param {Object[]} tags - Raw response tags
+   * @returns {Object[]} Array of category objects with { id, title, path, comment, color, priority }
+   */
   parseCategories(tags) {
     // As per aMule source: first tag is EC_TAG_PREFS_CATEGORIES container
     const prefsTag = tags[0];
@@ -973,13 +1099,22 @@ class AmuleClient {
       });
   }
 
+  /**
+   * Extract the new category ID from an EC_OP_CREATE_CATEGORY response.
+   * @param {Object} response - Raw EC response
+   * @returns {number|null} The new category ID, or null if not found
+   */
   parseCategoryIdFromResponse(response) {
-    // aMule returns the new category ID in the response
-    // Look for EC_TAG_CATEGORY tag with the new ID
     const categoryTag = response.tags?.find(t => t.tagId === EC_TAGS.EC_TAG_CATEGORY);
     return categoryTag?.humanValue || categoryTag?.value || null;
   }
 
+  /**
+   * Format a raw EC value into a human-readable string.
+   * @param {*} value - Raw value to format
+   * @param {number} type - EC_VALUE_TYPE constant
+   * @returns {string|*} Formatted string or original value
+   */
   formatValue(value, type) {
     if (value === undefined || value === null) return value;
     
@@ -1095,6 +1230,13 @@ class AmuleClient {
     return result;
   }
 
+  /**
+   * Build a nested JS object tree from raw EC tags.
+   * Handles duplicate keys by converting to arrays, and attaches
+   * formatted values via EC_TAG_STAT_VALUE_TYPE children.
+   * @param {Object[]} tags - Array of raw EC tags
+   * @returns {Object} Nested object tree keyed by tag name strings
+   */
   buildTagTree(tags) {
     const obj = {};
     
