@@ -946,6 +946,7 @@ class AmuleClient {
         case EC_TAGS.EC_TAG_PARTFILE_CAT:                     result.category = val || 0; break;
         case EC_TAGS.EC_TAG_PARTFILE_LAST_SEEN_COMP:          result.lastSeenComplete = val; break;
         case EC_TAGS.EC_TAG_PARTFILE_ED2K_LINK:               result.ed2kLink = val; break;
+        case EC_TAGS.EC_TAG_PARTFILE_SHARED:                   result.isShared = val === 1; break;
         case EC_TAGS.EC_TAG_PARTFILE_PART_STATUS:             result._rawPartStatus = sub.value; break;
         case EC_TAGS.EC_TAG_PARTFILE_GAP_STATUS:              result._rawGapStatus = sub.value; break;
         case EC_TAGS.EC_TAG_PARTFILE_REQ_STATUS:              result._rawReqStatus = sub.value; break;
