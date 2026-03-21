@@ -191,7 +191,7 @@ class AmuleClient {
   /**
    * Get the full list of shared files (non-incremental).
    * Unlike getUpdate(), this always returns the complete list.
-   * @returns {Object[]} Array of shared file objects with parsed fields
+   * @returns {Promise<{fileName: string, fileHash: string, fileSize: number, transferred: number, transferredTotal: number, reqCount: number, reqCountTotal: number, acceptedCount: number, acceptedCountTotal: number, priority: number, path: string, completeSources: number, onQueue: number, ed2kLink: string, raw: Object}[]>} Parsed shared file objects
    */
   async getSharedFiles() {
     if (DEBUG) console.log("[DEBUG] Requesting shared files...");
@@ -212,7 +212,7 @@ class AmuleClient {
    *
    * @param {number[]} [ecids] - Specific ecids to clear. If omitted, clears all
    *   downloads at 100% from the internal _updateState cache.
-   * @returns {{ opcode: number, cleared: number[] }} Response opcode and list of ecids sent.
+   * @returns {Promise<{ opcode: number, cleared: number[] }>} Response opcode and list of ecids sent.
    */
   async clearCompleted(ecids) {
     if (DEBUG) console.log("[DEBUG] Clearing completed downloads...");
@@ -1126,7 +1126,7 @@ class AmuleClient {
    * Parse fields from an EC_TAG_KNOWNFILE tag (for incremental merging).
    * Only returns fields actually present in the response.
    * @param {Object} tag - Raw EC tag
-   * @returns {Object} Parsed shared file fields
+   * @returns {{fileName: string, fileHash: string, fileSize: number, transferred: number, transferredTotal: number, reqCount: number, reqCountTotal: number, acceptedCount: number, acceptedCountTotal: number, priority: number, path: string, completeSources: number, onQueue: number, ed2kLink: string}[]} Parsed shared file fields
    * @private
    */
   _parseSharedFileFields(tag) {
