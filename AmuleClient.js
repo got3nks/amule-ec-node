@@ -54,7 +54,7 @@ class AmuleClient {
    * @param {number} opcode - EC opcode to send
    * @param {string} ip - Server IP address
    * @param {number} port - Server port
-   * @returns {boolean} True if the command succeeded
+   * @returns {Promise<boolean>} True if the command succeeded
    * @private
    */
   async _sendServerCommand(opcode, ip, port) {
@@ -70,7 +70,7 @@ class AmuleClient {
    * Send a command targeting a file by hash.
    * @param {number} opcode - EC opcode to send
    * @param {string} fileHash - MD4 hash of the file
-   * @returns {boolean} True if the command succeeded
+   * @returns {Promise<boolean>} True if the command succeeded
    * @private
    */
   async _sendFileCommand(opcode, fileHash) {
@@ -85,7 +85,7 @@ class AmuleClient {
   /**
    * Send a simple request and return the response as a tag tree.
    * @param {number} opcode - EC opcode to send
-   * @returns {Object} Parsed tag tree
+   * @returns {Promise<Object>} Parsed tag tree
    * @private
    */
   async _requestTagTree(opcode) {
@@ -96,7 +96,7 @@ class AmuleClient {
 
   /**
    * Get the current connection state (ed2k server, Kad network).
-   * @returns {Object} Tag tree with connection state fields
+   * @returns {Promise<Object>} Tag tree with connection state fields
    */
   async getConnectionState() {
     return this._requestTagTree(EC_OPCODES.EC_OP_GET_CONNSTATE);
@@ -104,7 +104,7 @@ class AmuleClient {
 
   /**
    * Get aMule statistics (upload/download speed, shared file count, etc.).
-   * @returns {Object} Tag tree with stats fields
+   * @returns {Promise<Object>} Tag tree with stats fields
    */
   async getStats() {
     return this._requestTagTree(EC_OPCODES.EC_OP_STAT_REQ);
@@ -112,7 +112,7 @@ class AmuleClient {
 
   /**
    * Get the full statistics tree (hierarchical stats with node IDs).
-   * @returns {Object} Tag tree with nested stats
+   * @returns {Promise<Object>} Tag tree with nested stats
    */
   async getStatsTree() {
     return this._requestTagTree(EC_OPCODES.EC_OP_GET_STATSTREE);
@@ -120,7 +120,7 @@ class AmuleClient {
 
   /**
    * Get ed2k server info (message of the day, etc.).
-   * @returns {Object} Tag tree with server info
+   * @returns {Promise<Object>} Tag tree with server info
    */
   async getServerInfo() {
     return this._requestTagTree(EC_OPCODES.EC_OP_GET_SERVERINFO);
@@ -128,7 +128,7 @@ class AmuleClient {
 
   /**
    * Get aMule log messages.
-   * @returns {Object} Tag tree with log entries
+   * @returns {Promise<Object>} Tag tree with log entries
    */
   async getLog() {
     return this._requestTagTree(EC_OPCODES.EC_OP_GET_LOG);
@@ -136,7 +136,7 @@ class AmuleClient {
 
   /**
    * Get aMule debug log messages.
-   * @returns {Object} Tag tree with debug log entries
+   * @returns {Promise<Object>} Tag tree with debug log entries
    */
   async getDebugLog() {
     return this._requestTagTree(EC_OPCODES.EC_OP_GET_DEBUGLOG);
@@ -144,7 +144,7 @@ class AmuleClient {
 
   /**
    * Get the list of ed2k servers.
-   * @returns {Object} Tag tree with server entries
+   * @returns {Promise<Object>} Tag tree with server entries
    */
   async getServerList() {
     return this._requestTagTree(EC_OPCODES.EC_OP_GET_SERVER_LIST);
@@ -154,7 +154,7 @@ class AmuleClient {
    * Remove an ed2k server from the server list.
    * @param {string} ip - Server IP address
    * @param {number} port - Server port
-   * @returns {boolean} True if the server was removed successfully
+   * @returns {Promise<boolean>} True if the server was removed successfully
    */
   async removeServer(ip, port) {
     return this._sendServerCommand(EC_OPCODES.EC_OP_SERVER_REMOVE, ip, port);
@@ -164,7 +164,7 @@ class AmuleClient {
    * Connect to an ed2k server.
    * @param {string} ip - Server IP address
    * @param {number} port - Server port
-   * @returns {boolean} True if connection was initiated successfully
+   * @returns {Promise<boolean>} True if connection was initiated successfully
    */
   async connectServer(ip, port) {
     return this._sendServerCommand(EC_OPCODES.EC_OP_SERVER_CONNECT, ip, port);
@@ -174,7 +174,7 @@ class AmuleClient {
    * Disconnect from an ed2k server.
    * @param {string} ip - Server IP address
    * @param {number} port - Server port
-   * @returns {boolean} True if disconnection was successful
+   * @returns {Promise<boolean>} True if disconnection was successful
    */
   async disconnectServer(ip, port) {
     return this._sendServerCommand(EC_OPCODES.EC_OP_SERVER_DISCONNECT, ip, port);
@@ -182,7 +182,7 @@ class AmuleClient {
 
   /**
    * Get the upload queue (clients waiting to download from us).
-   * @returns {Object} Tag tree with upload queue entries
+   * @returns {Promise<Object>} Tag tree with upload queue entries
    */
   async getUploadingQueue() {
     return this._requestTagTree(EC_OPCODES.EC_OP_GET_ULOAD_QUEUE);
@@ -249,7 +249,7 @@ class AmuleClient {
 
   /**
    * Tell aMule to reload its shared files from disk.
-   * @returns {boolean} True if the reload was initiated successfully
+   * @returns {Promise<boolean>} True if the reload was initiated successfully
    */
   async refreshSharedFiles() {
     const response = await this.session.sendPacket(EC_OPCODES.EC_OP_SHAREDFILES_RELOAD, []);
@@ -453,7 +453,7 @@ class AmuleClient {
    * @param {string} query - Search query string
    * @param {number} network - Network type (EC_SEARCH_TYPE value)
    * @param {string|null} [extension] - Optional file extension filter
-   * @returns {Object[]} Raw response tags
+   * @returns {Promise<Object[]>} Raw response tags
    * @private
    */
   async _search(query, network, extension=null) {
@@ -495,7 +495,7 @@ class AmuleClient {
 
   /**
    * Get the progress status of an ongoing search.
-   * @returns {Object[]} Raw response tags with search progress
+   * @returns {Promise<Object[]>} Raw response tags with search progress
    * @private
    */
   async _getSearchRequestStatus() {
@@ -511,7 +511,7 @@ class AmuleClient {
 
   /**
    * Get the results of a completed search.
-   * @returns {{ resultsLength: number, results: Object[] }} Search results sorted by source count
+   * @returns {Promise<{ resultsLength: number, results: Object[] }>} Search results sorted by source count
    */
   async getSearchResults() {
     if (DEBUG) console.log("[DEBUG] Requesting search results...");
@@ -531,7 +531,7 @@ class AmuleClient {
    * @param {string} query - Search query string
    * @param {string|number} network - Network type: 'global', 'local', 'kad', or EC_SEARCH_TYPE value
    * @param {string} [extension] - Optional file extension filter
-   * @returns {{ resultsLength: number, results: Object[] }} Search results sorted by source count
+   * @returns {Promise<{ resultsLength: number, results: Object[] }>} Search results sorted by source count
    */
   async searchAndWaitResults(query, network, extension) {
     const timeoutMs = 120000;
@@ -586,7 +586,7 @@ class AmuleClient {
    * Download a file from search results.
    * @param {string} fileHash - MD4 hash of the file to download
    * @param {number} [categoryId=0] - Category ID to assign (0 = default)
-   * @returns {boolean} True if the download was started successfully
+   * @returns {Promise<boolean>} True if the download was started successfully
    */
   async downloadSearchResult(fileHash, categoryId = 0) {
     if (DEBUG) console.log("[DEBUG] Requesting download ",fileHash," from search result with category", categoryId, "...");
@@ -618,7 +618,7 @@ class AmuleClient {
   /**
    * Cancel and delete a download.
    * @param {string} fileHash - MD4 hash of the file to cancel
-   * @returns {boolean} True if the download was cancelled successfully
+   * @returns {Promise<boolean>} True if the download was cancelled successfully
    */
   async cancelDownload(fileHash) {
     return this._sendFileCommand(EC_OPCODES.EC_OP_PARTFILE_DELETE, fileHash);
@@ -628,7 +628,7 @@ class AmuleClient {
    * Add a download via ed2k:// link.
    * @param {string} link - ed2k:// link
    * @param {number} [categoryId=0] - Category ID to assign (0 = default)
-   * @returns {boolean} True if the link was added successfully
+   * @returns {Promise<boolean>} True if the link was added successfully
    */
   async addEd2kLink(link, categoryId=0) {
     if (DEBUG) console.log("[DEBUG] Requesting ed2k link download ",link,"...");
@@ -660,7 +660,7 @@ class AmuleClient {
   /**
    * Pause a download.
    * @param {string} fileHash - MD4 hash of the file to pause
-   * @returns {boolean} True if the download was paused successfully
+   * @returns {Promise<boolean>} True if the download was paused successfully
    */
   async pauseDownload(fileHash) {
     return this._sendFileCommand(EC_OPCODES.EC_OP_PARTFILE_PAUSE, fileHash);
@@ -669,7 +669,7 @@ class AmuleClient {
   /**
    * Resume a paused download.
    * @param {string} fileHash - MD4 hash of the file to resume
-   * @returns {boolean} True if the download was resumed successfully
+   * @returns {Promise<boolean>} True if the download was resumed successfully
    */
   async resumeDownload(fileHash) {
     return this._sendFileCommand(EC_OPCODES.EC_OP_PARTFILE_RESUME, fileHash);
@@ -677,7 +677,7 @@ class AmuleClient {
 
   /**
    * Get all aMule categories.
-   * @returns {Object[]} Array of category objects with { id, title, path, comment, color, priority }
+   * @returns {Promise<Object[]>} Array of category objects with { id, title, path, comment, color, priority }
    */
   async getCategories() {
     if (DEBUG) console.log("[DEBUG] Requesting categories...");
@@ -706,7 +706,7 @@ class AmuleClient {
    * @param {string} [comment=''] - Category comment
    * @param {number} [color=0] - Category color in RGB format (0xRRGGBB)
    * @param {number} [priority=0] - Download priority for this category
-   * @returns {{ success: boolean, categoryId: number|null }} Result with the new category ID
+   * @returns {Promise<{ success: boolean, categoryId: number|null }>} Result with the new category ID
    */
   async createCategory(title, path = '', comment = '', color = 0, priority = 0) {
     if (DEBUG) console.log("[DEBUG] Creating category:", title);
@@ -775,7 +775,7 @@ class AmuleClient {
    * @param {string} comment - Category comment
    * @param {number} color - Category color in RGB format (0xRRGGBB)
    * @param {number} priority - Download priority
-   * @returns {boolean} True if the update was successful
+   * @returns {Promise<boolean>} True if the update was successful
    */
   async updateCategory(categoryId, title, path, comment, color, priority) {
     if (DEBUG) console.log("[DEBUG] Updating category:", categoryId);
@@ -827,7 +827,7 @@ class AmuleClient {
   /**
    * Delete a category from aMule.
    * @param {number} categoryId - Category ID to delete
-   * @returns {boolean} True if the deletion was successful
+   * @returns {Promise<boolean>} True if the deletion was successful
    */
   async deleteCategory(categoryId) {
     if (DEBUG) console.log("[DEBUG] Deleting category:", categoryId);
@@ -851,7 +851,7 @@ class AmuleClient {
    * Assign a download to a category.
    * @param {string} fileHash - MD4 hash of the file
    * @param {number} categoryId - Category ID to assign
-   * @returns {boolean} True if the category was set successfully
+   * @returns {Promise<boolean>} True if the category was set successfully
    */
   async setFileCategory(fileHash, categoryId) {
     if (DEBUG) console.log("[DEBUG] Setting file category:", fileHash, "->", categoryId);
@@ -885,7 +885,7 @@ class AmuleClient {
    * Searches the download queue first, then known (shared) files.
    * @param {string} fileHash - MD4 hash of the file to rename
    * @param {string} newName - New filename
-   * @returns {{ success: boolean, error?: string }} Result with optional error message
+   * @returns {Promise<{ success: boolean, error?: string }>} Result with optional error message
    */
   async renameFile(fileHash, newName) {
     if (DEBUG) console.log("[DEBUG] Renaming file:", fileHash, "->", newName);
