@@ -260,7 +260,7 @@ class AmuleClient {
   /**
    * Get the full download queue (non-incremental).
    * Unlike getUpdate(), this always returns the complete list.
-   * @returns {Object[]} Array of download objects with parsed fields
+   * @returns {Promise<Object[]>} Array of download objects with parsed fields
    */
   async getDownloadQueue() {
     if (DEBUG) console.log("[DEBUG] Requesting downloaded files...");
