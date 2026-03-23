@@ -189,6 +189,48 @@ class AmuleClient {
   }
 
   /**
+   * Ask aMule to request another user's shared file list (GUI: "View Files" on a client in
+   * GenericClientListCtrl — {@code OnViewFiles} calls {@code RequestSharedFileList()}).
+   *
+   * EC: {@code EC_OP_FRIEND} + {@code EC_TAG_FRIEND_SHARED} (empty CUSTOM tag) with child
+   * {@code EC_TAG_CLIENT} (uint32 ECID), same as amule-remote-gui
+   * {@code CFriendListRem::RequestSharedFileList(CClientRef&)}.
+   *
+   * Use the client {@code ecid} from {@link #getUploadingQueue}, {@link #getDownloadQueue}, or
+   * {@link #getUpdate}.
+   *
+   * On success, aMule requests the list over ed2k and merges hits into the search list (same as
+   * the GUI). Poll {@link #getSearchResults} after a short delay to read filenames/hashes; the
+   * EC call itself only confirms the request was queued ({@code EC_OP_NOOP}).
+   *
+   * @param {number} clientEcid - Remote client ECID
+   * @returns {Promise<{ success: boolean, opcode: number, response: Object }>}
+   */
+  async requestClientSharedFileList(clientEcid) {
+    const reqTags = [
+      this.session.createTag(
+        EC_TAGS.EC_TAG_FRIEND_SHARED,
+        EC_TAG_TYPES.EC_TAGTYPE_CUSTOM,
+        undefined,
+        [
+          {
+            tagId: EC_TAGS.EC_TAG_CLIENT,
+            tagType: EC_TAG_TYPES.EC_TAGTYPE_UINT32,
+            value: clientEcid
+          }
+        ]
+      )
+    ];
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_FRIEND, reqTags);
+    if (DEBUG) console.log("[DEBUG] requestClientSharedFileList response:", response);
+    return {
+      success: this._isSuccess(response),
+      opcode: response.opcode,
+      response
+    };
+  }
+
+  /**
    * Get the full list of shared files (non-incremental).
    * Unlike getUpdate(), this always returns the complete list.
    * @returns {Promise<{fileName: string, fileHash: string, fileSize: number, transferred: number, transferredTotal: number, reqCount: number, reqCountTotal: number, acceptedCount: number, acceptedCountTotal: number, priority: number, path: string, completeSources: number, onQueue: number, ed2kLink: string, raw: Object}[]>} Parsed shared file objects
