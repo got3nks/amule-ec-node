@@ -22,6 +22,15 @@ class AmuleClient {
    */
   constructor(host, port, password, options = {}) {
     this.session = new ECProtocol(host, port, password, options);
+
+    // Clear incremental state on reconnection — aMule resets its
+    // server-side diff state, so our XOR buffers and update cache
+    // would produce corrupted data if not cleared.
+    this.session.onReconnected = () => {
+      this._ecBufferState = null;
+      this._updateState = null;
+      console.log('[AmuleClient] Cleared incremental state after reconnection');
+    };
   }
 
   /**
@@ -985,22 +994,38 @@ class AmuleClient {
       const decoded = AmuleClient._decodeRLE(fields[raw]);
 
       // Step 2: XOR-reconstruct with previous state
-      // aMule's RLE_Data XOR-diffs against the previous interleaved buffer.
-      // When the gap count changes, the buffer size changes too. aMule
-      // zero-extends (grow) or truncates (shrink) the old buffer before XOR,
-      // so the diff is always the new size. We XOR overlapping bytes with
-      // prev and treat the rest as raw (XOR with implied zeros = identity).
+      // Mirrors aMule's RLE_Data exactly:
+      //   1. Realloc(newSize) — resize m_buff to match incoming size
+      //      (preserves overlap, zero-extends on grow, truncates on shrink)
+      //   2. m_buff[k] ^= decBuf[k] — XOR diff onto resized prev
+      //
+      // IMPORTANT: The data is stored in column-major (interleaved) order.
+      // aMule's Realloc operates on the raw interleaved bytes — it does NOT
+      // de-interleave before resizing. This means on size change, the column
+      // stride changes and the overlapping bytes represent different logical
+      // positions. aMule's own code does this too, so we match it exactly.
       const state = this._ecBufferState.get(ecid) || {};
       const prev = state[out];
       let current;
       let xorApplied = false;
       if (prev) {
-        current = Buffer.from(decoded); // copy decoded
-        const overlapLen = Math.min(decoded.length, prev.length);
-        for (let i = 0; i < overlapLen; i++) {
-          current[i] = decoded[i] ^ prev[i];
+        // Realloc: resize prev to decoded.length (same as aMule's Realloc)
+        let resized;
+        if (prev.length === decoded.length) {
+          resized = Buffer.from(prev); // copy — don't mutate stored state
+        } else if (decoded.length > prev.length) {
+          // Grow: copy old data, zero-fill extension
+          resized = Buffer.alloc(decoded.length, 0);
+          prev.copy(resized, 0, 0, prev.length);
+        } else {
+          // Shrink: truncate to new size
+          resized = Buffer.from(prev.subarray(0, decoded.length));
         }
-        // Bytes beyond overlapLen stay as decoded[i] (XOR with zero = identity)
+        // XOR: resized[k] ^= decoded[k] (same as aMule: m_buff[k] ^= decBuf[k])
+        for (let i = 0; i < decoded.length; i++) {
+          resized[i] ^= decoded[i];
+        }
+        current = resized;
         xorApplied = true;
       } else {
         // First update — no previous state, decoded IS the full data
@@ -1023,10 +1048,6 @@ class AmuleClient {
       } else {
         // partStatus: each byte is a source count
         fields[out] = Array.from(current);
-      }
-
-      if (DEBUG && uint64 && fields[out].length > 0) {
-        console.log(`[EC-RECONSTRUCT]   → ${fields[out].length} pairs, first 3:`, fields[out].slice(0, 3));
       }
 
       // Clean up raw field

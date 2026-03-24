@@ -110,6 +110,8 @@ class ECProtocol {
         console.log("[ECProtocol] Reconnected and authenticated successfully.");
         this.consecutiveTimeouts = 0;
         this.reconnecting = false;
+        // Notify subclasses to clear incremental state (XOR buffers, update caches)
+        if (typeof this.onReconnected === 'function') this.onReconnected();
         return;
       } catch (err) {
         console.warn(`[ECProtocol] Reconnect attempt ${i + 1} failed:`, err.message);
