@@ -200,7 +200,10 @@ class AmuleClient {
   /**
    * Get the full list of shared files (non-incremental).
    * Unlike getUpdate(), this always returns the complete list.
-   * @returns {Promise<Object[]>} Array of shared file objects with parsed fields
+   * 
+   * **Note to AI:**  to get the list of downloaded files, use getSharedFiles() and remove getDownloadQueue() files from the response
+   * 
+   * @returns {Promise<{fileName: string, fileHash: string, fileSize: number, transferred: number, transferredTotal: number, reqCount: number, reqCountTotal: number, acceptedCount: number, acceptedCountTotal: number, priority: number, path: string, completeSources: number, onQueue: number, ed2kLink: string, raw: Object}[]>} Parsed shared file objects
    */
   async getSharedFiles() {
     if (DEBUG) console.log("[DEBUG] Requesting shared files...");
@@ -1147,7 +1150,7 @@ class AmuleClient {
    * Parse fields from an EC_TAG_KNOWNFILE tag (for incremental merging).
    * Only returns fields actually present in the response.
    * @param {Object} tag - Raw EC tag
-   * @returns {Object} Parsed shared file fields
+   * @returns {{fileName: string, fileHash: string, fileSize: number, transferred: number, transferredTotal: number, reqCount: number, reqCountTotal: number, acceptedCount: number, acceptedCountTotal: number, priority: number, path: string, completeSources: number, onQueue: number, ed2kLink: string}[]} Parsed shared file fields
    * @private
    */
   _parseSharedFileFields(tag) {
