@@ -18,7 +18,7 @@ const DEBUG = false;
  */
 function cleanSpecialCharacters(str) {
   if (typeof str !== 'string' || str.length === 0) return str;
-  return str.replaceAll('Ãª', 'ê').replaceAll('Ã©', 'é').replaceAll('Ã¨', 'è').replaceAll('Ã¢','â').replaceAll('Ã´','ô');
+  return str.replaceAll('Ãª', 'ê').replaceAll('Ã©', 'é').replaceAll('Ã¨', 'è').replaceAll('Ã¢','â').replaceAll('Ã´','ô').replaceAll('Ã ','a').replaceAll('Ã´','ô');
 }
 
 class AmuleClient {
