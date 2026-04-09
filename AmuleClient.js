@@ -13,6 +13,14 @@ const {
 
 const DEBUG = false;
 
+/**
+ * Replace special characters with their ASCII equivalents. Useful for french special characters.
+ */
+function cleanSpecialCharacters(str) {
+  if (typeof str !== 'string' || str.length === 0) return str;
+  return str.replaceAll('Ãª', 'ê').replaceAll('Ã©', 'é').replaceAll('Ã¨', 'è').replaceAll('Ã¢','â').replaceAll('Ã´','ô');
+}
+
 class AmuleClient {
   /**
    * @param {string} host - aMule EC hostname or IP address
@@ -941,7 +949,7 @@ class AmuleClient {
     for (const sub of tag.children) {
       const val = sub.humanValue;
       switch (sub.tagId) {
-        case EC_TAGS.EC_TAG_PARTFILE_NAME:                    result.fileName = val; break;
+        case EC_TAGS.EC_TAG_PARTFILE_NAME:                    result.fileName = cleanSpecialCharacters(val); break;
         case EC_TAGS.EC_TAG_PARTFILE_HASH:                    result.fileHash = val; break;
         case EC_TAGS.EC_TAG_PARTFILE_STATUS:                  result.status = val; break;
         case EC_TAGS.EC_TAG_PARTFILE_SIZE_FULL:               result.fileSize = Number(val); break;
