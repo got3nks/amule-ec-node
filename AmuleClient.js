@@ -13,6 +13,25 @@ const {
 
 const DEBUG = false;
 
+/**
+ * Attempt to fix Mojibake filenames where UTF-8 bytes were decoded as Latin-1
+ * (e.g. "Ã©" → "é"). Only applies the correction if the round-trip is clean
+ * (no replacement characters), so already-correct strings are left untouched.
+ * Strings containing characters above U+00FF (Cyrillic, Greek, CJK, etc.) are
+ * already correctly decoded Unicode and are returned unchanged.
+ */
+function fixMojibake(str) {
+  if (typeof str !== 'string') return str;
+  for (let i = 0; i < str.length; i++) {
+    if (str.charCodeAt(i) > 0xFF) return str;  // already real Unicode, leave it
+  }
+  try {
+    const decoded = Buffer.from(str, 'latin1').toString('utf8');
+    if (!decoded.includes('\uFFFD')) return decoded;
+  } catch {}
+  return str;
+}
+
 class AmuleClient {
   /**
    * @param {string} host - aMule EC hostname or IP address
@@ -941,7 +960,7 @@ class AmuleClient {
     for (const sub of tag.children) {
       const val = sub.humanValue;
       switch (sub.tagId) {
-        case EC_TAGS.EC_TAG_PARTFILE_NAME:                    result.fileName = val; break;
+        case EC_TAGS.EC_TAG_PARTFILE_NAME:                    result.fileName = fixMojibake(val); break;
         case EC_TAGS.EC_TAG_PARTFILE_HASH:                    result.fileHash = val; break;
         case EC_TAGS.EC_TAG_PARTFILE_STATUS:                  result.status = val; break;
         case EC_TAGS.EC_TAG_PARTFILE_SIZE_FULL:               result.fileSize = Number(val); break;
@@ -1157,7 +1176,7 @@ class AmuleClient {
     for (const sub of tag.children) {
       const val = sub.humanValue;
       switch (sub.tagId) {
-        case EC_TAGS.EC_TAG_PARTFILE_NAME:               result.fileName = val; break;
+        case EC_TAGS.EC_TAG_PARTFILE_NAME:               result.fileName = fixMojibake(val); break;
         case EC_TAGS.EC_TAG_PARTFILE_HASH:               result.fileHash = val; break;
         case EC_TAGS.EC_TAG_PARTFILE_SIZE_FULL:          result.fileSize = Number(val); break;
         case EC_TAGS.EC_TAG_KNOWNFILE_XFERRED:           result.transferred = Number(val); break;
@@ -1234,7 +1253,7 @@ class AmuleClient {
         case EC_TAGS.EC_TAG_CLIENT_MOD_VERSION:     result.modVersion = val; break;
         case EC_TAGS.EC_TAG_CLIENT_OS_INFO:         result.osInfo = val; break;
         case EC_TAGS.EC_TAG_CLIENT_KAD_PORT:        result.kadPort = val; break;
-        case EC_TAGS.EC_TAG_PARTFILE_NAME:          result.transferFileName = val; break;
+        case EC_TAGS.EC_TAG_PARTFILE_NAME:          result.transferFileName = fixMojibake(val); break;
         case EC_TAGS.EC_TAG_PARTFILE_SIZE_XFER:     result.transferredSession = val; break;
         case EC_TAGS.EC_TAG_CLIENT_UPLOAD_SESSION:  result.uploadSession = val; break;
       }
