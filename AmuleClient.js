@@ -611,6 +611,137 @@ class AmuleClient {
   }
 
   /**
+   * Set the comment and/or rating on a shared file.
+   *
+   * Both parameters are optional — pass an empty string / undefined to leave
+   * the comment unchanged, and 0 to clear the rating.  The file must be in
+   * aMule's shared files list (EC_OP_GET_SHARED_FILES).
+   *
+   * Rating scale used by aMule / ed2k:
+   *   0 = Not rated, 1 = Fake, 2 = Poor, 3 = Fair, 4 = Good, 5 = Excellent
+   *
+   * @param {string} fileHash - MD4 hash of the shared file
+   * @param {string} [comment=''] - Comment text (empty string to clear)
+   * @param {number} [rating=0] - Rating 0–5
+   * @returns {Promise<boolean>} True if the command was accepted (EC_OP_NOOP)
+   */
+  async setFileComment(fileHash, comment = '', rating = 0) {
+    if (DEBUG) console.log("[DEBUG] Setting comment/rating for file:", fileHash, comment, rating);
+
+    const reqTags = [
+      this.session.createTag(
+        EC_TAGS.EC_TAG_KNOWNFILE,
+        EC_TAG_TYPES.EC_TAGTYPE_HASH16,
+        fileHash
+      ),
+      this.session.createTag(
+        EC_TAGS.EC_TAG_KNOWNFILE_COMMENT,
+        EC_TAG_TYPES.EC_TAGTYPE_STRING,
+        comment
+      ),
+      this.session.createTag(
+        EC_TAGS.EC_TAG_KNOWNFILE_RATING,
+        EC_TAG_TYPES.EC_TAGTYPE_UINT8,
+        rating
+      )
+    ];
+
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_SHARED_FILE_SET_COMMENT, reqTags);
+
+    if (DEBUG) console.log("[DEBUG] setFileComment response:", response);
+
+    return this._isSuccess(response);
+  }
+
+  /**
+   * Ask aMule to request the shared file list from a connected client (peer).
+   *
+   * aMule forwards the request to the remote peer over the ed2k protocol.
+   * The peer's response arrives asynchronously and populates the search
+   * results list — use getSearchResults() or getClientSharedFiles() to
+   * retrieve them.
+   *
+   * Note: https://github.com/amule-project/amule/pull/430 needs to be integrated into aMule before this works.
+   * 
+   * @param {number} clientEcid - EC ID of the client (from getUpdate() or getUploadingQueue())
+   * @returns {Promise<boolean>} True if aMule accepted the request (client was found)
+   */
+  async requestClientSharedFiles(clientEcid) {
+    if (DEBUG) console.log("[DEBUG] Requesting shared files from client ecid:", clientEcid);
+
+    const reqTags = [
+      this.session.createTag(
+        EC_TAGS.EC_TAG_FRIEND_SHARED,
+        EC_TAG_TYPES.EC_TAGTYPE_CUSTOM,
+        undefined,
+        [{
+          tagId: EC_TAGS.EC_TAG_CLIENT,
+          tagType: EC_TAG_TYPES.EC_TAGTYPE_UINT32,
+          value: clientEcid
+        }]
+      )
+    ];
+
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_FRIEND, reqTags);
+
+    if (DEBUG) console.log("[DEBUG] requestClientSharedFiles response:", response);
+
+    if (response.opcode === EC_OPCODES.EC_OP_FAILED) {
+      const errorMsg = response.tags?.find(t => t.tagId === EC_TAGS.EC_TAG_STRING)?.humanValue;
+      throw new Error(errorMsg || 'Client not found or shared file request failed');
+    }
+
+    return this._isSuccess(response);
+  }
+
+  /**
+   * Request the shared file list from a connected client and wait for results.
+   *
+   * Sends a shared-file request to the remote peer, then polls search results
+   * until new entries appear or the timeout expires.  Results land in aMule's
+   * search results list, so any previous search results will be replaced.
+   * 
+   * Note: https://github.com/amule-project/amule/pull/430 needs to be integrated into aMule before this works.
+   *
+   * @param {number} clientEcid - EC ID of the client (from getUpdate() or getUploadingQueue())
+   * @param {number} [timeoutMs=30000] - Maximum wait time in milliseconds
+   * @param {number} [pollIntervalMs=1000] - How often to poll for results (ms)
+   * @returns {Promise<{ resultsLength: number, results: Object[] }>} Search results from the client
+   */
+  async getClientSharedFiles(clientEcid, timeoutMs = 30000, pollIntervalMs = 1000) {
+    if (DEBUG) console.log("[DEBUG] getClientSharedFiles ecid:", clientEcid);
+
+    // Snapshot result count before making the request so we can detect new results
+    let baselineCount = 0;
+    try {
+      const initial = await this.getSearchResults();
+      baselineCount = initial.resultsLength;
+    } catch {}
+
+    await this.requestClientSharedFiles(clientEcid);
+
+    const startTime = Date.now();
+
+    while (true) {
+      const elapsed = Date.now() - startTime;
+      if (elapsed >= timeoutMs) {
+        if (DEBUG) console.log("[DEBUG] getClientSharedFiles timed out, returning whatever results are available");
+        return this.getSearchResults();
+      }
+
+      await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+
+      const current = await this.getSearchResults();
+      if (current.resultsLength !== baselineCount) {
+        if (DEBUG) console.log(`[DEBUG] Got ${current.resultsLength} results from client`);
+        return current;
+      }
+
+      if (DEBUG) console.log(`[DEBUG] Waiting for client shared files... (${elapsed}ms elapsed, still ${current.resultsLength} results)`);
+    }
+  }
+
+  /**
    * Download a file from search results.
    * @param {string} fileHash - MD4 hash of the file to download
    * @param {number} [categoryId=0] - Category ID to assign (0 = default)
@@ -1166,7 +1297,7 @@ class AmuleClient {
    * Parse fields from an EC_TAG_KNOWNFILE tag (for incremental merging).
    * Only returns fields actually present in the response.
    * @param {Object} tag - Raw EC tag
-   * @returns {{fileName: string, fileHash: string, fileSize: number, transferred: number, transferredTotal: number, reqCount: number, reqCountTotal: number, acceptedCount: number, acceptedCountTotal: number, priority: number, path: string, completeSources: number, onQueue: number, ed2kLink: string}[]} Parsed shared file fields
+   * @returns {{fileName: string, fileHash: string, fileSize: number, transferred: number, transferredTotal: number, reqCount: number, reqCountTotal: number, acceptedCount: number, acceptedCountTotal: number, priority: number, path: string, completeSources: number, onQueue: number, ed2kLink: string, comment: string, rating: number}[]} Parsed shared file fields
    * @private
    */
   _parseSharedFileFields(tag) {
@@ -1190,6 +1321,8 @@ class AmuleClient {
         case EC_TAGS.EC_TAG_KNOWNFILE_COMPLETE_SOURCES:  result.completeSources = val; break;
         case EC_TAGS.EC_TAG_KNOWNFILE_ON_QUEUE:          result.onQueue = val; break;
         case EC_TAGS.EC_TAG_PARTFILE_ED2K_LINK:          result.ed2kLink = val; break;
+        case EC_TAGS.EC_TAG_KNOWNFILE_COMMENT:           result.comment = val || ''; break;
+        case EC_TAGS.EC_TAG_KNOWNFILE_RATING:            result.rating = val || 0; break;
       }
     }
 
