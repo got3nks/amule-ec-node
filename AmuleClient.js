@@ -947,6 +947,56 @@ class AmuleClient {
   }
 
   /**
+   * Set the comment and rating on a shared file.
+   *
+   * aMule's EC handler always writes both fields together — missing tags are
+   * treated as "clear" (empty comment / zero rating). To update only one field
+   * while preserving the other, read the current values via getSharedFiles()
+   * first and re-supply the unchanged one here.
+   *
+   * Rating scale: 0 = Not rated, 1 = Fake, 2 = Poor, 3 = Fair, 4 = Good, 5 = Excellent
+   *
+   * @param {string} fileHash - MD4 hash of the shared file
+   * @param {string} comment - Comment text (empty string clears)
+   * @param {number} rating - Rating 0–5 (0 = not rated)
+   * @returns {Promise<boolean>} True if the command was accepted
+   */
+  async setFileRatingComment(fileHash, comment, rating) {
+    if (typeof comment !== 'string') {
+      throw new TypeError('setFileRatingComment: comment must be a string');
+    }
+    if (!Number.isInteger(rating) || rating < 0 || rating > 5) {
+      throw new RangeError('setFileRatingComment: rating must be an integer between 0 and 5');
+    }
+
+    if (DEBUG) console.log("[DEBUG] Setting comment/rating for file:", fileHash, comment, rating);
+
+    const reqTags = [
+      this.session.createTag(
+        EC_TAGS.EC_TAG_KNOWNFILE,
+        EC_TAG_TYPES.EC_TAGTYPE_HASH16,
+        fileHash
+      ),
+      this.session.createTag(
+        EC_TAGS.EC_TAG_KNOWNFILE_COMMENT,
+        EC_TAG_TYPES.EC_TAGTYPE_STRING,
+        comment
+      ),
+      this.session.createTag(
+        EC_TAGS.EC_TAG_KNOWNFILE_RATING,
+        EC_TAG_TYPES.EC_TAGTYPE_UINT8,
+        rating
+      )
+    ];
+
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_SHARED_FILE_SET_COMMENT, reqTags);
+
+    if (DEBUG) console.log("[DEBUG] setFileRatingComment response:", response);
+
+    return this._isSuccess(response);
+  }
+
+  /**
    * Parse fields from an EC_TAG_PARTFILE tag (for incremental merging).
    * Only returns fields actually present in the response.
    * @param {Object} tag - Raw EC tag
@@ -1166,7 +1216,7 @@ class AmuleClient {
    * Parse fields from an EC_TAG_KNOWNFILE tag (for incremental merging).
    * Only returns fields actually present in the response.
    * @param {Object} tag - Raw EC tag
-   * @returns {{fileName: string, fileHash: string, fileSize: number, transferred: number, transferredTotal: number, reqCount: number, reqCountTotal: number, acceptedCount: number, acceptedCountTotal: number, priority: number, path: string, completeSources: number, onQueue: number, ed2kLink: string}[]} Parsed shared file fields
+   * @returns {{fileName: string, fileHash: string, fileSize: number, transferred: number, transferredTotal: number, reqCount: number, reqCountTotal: number, acceptedCount: number, acceptedCountTotal: number, priority: number, path: string, completeSources: number, onQueue: number, ed2kLink: string, comment: string, rating: number}[]} Parsed shared file fields
    * @private
    */
   _parseSharedFileFields(tag) {
@@ -1190,6 +1240,8 @@ class AmuleClient {
         case EC_TAGS.EC_TAG_KNOWNFILE_COMPLETE_SOURCES:  result.completeSources = val; break;
         case EC_TAGS.EC_TAG_KNOWNFILE_ON_QUEUE:          result.onQueue = val; break;
         case EC_TAGS.EC_TAG_PARTFILE_ED2K_LINK:          result.ed2kLink = val; break;
+        case EC_TAGS.EC_TAG_KNOWNFILE_COMMENT:           result.comment = val || ''; break;
+        case EC_TAGS.EC_TAG_KNOWNFILE_RATING:            result.rating = val || 0; break;
       }
     }
 
