@@ -135,5 +135,6 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
-# Local test file for uint32 connection preferences (requires aMule fork)
+# Local test files (require aMule fork)
 examples/test-preferences.js
+examples/test-search-rating.js

@@ -1028,6 +1028,10 @@ class AmuleClient {
         case EC_TAGS.EC_TAG_PARTFILE_PART_STATUS:             result._rawPartStatus = sub.value; break;
         case EC_TAGS.EC_TAG_PARTFILE_GAP_STATUS:              result._rawGapStatus = sub.value; break;
         case EC_TAGS.EC_TAG_PARTFILE_REQ_STATUS:              result._rawReqStatus = sub.value; break;
+        // Aggregated user rating for search results (requires aMule PR #452
+        // https://github.com/amule-project/amule/pull/452). aMule builds without
+        // that patch don't emit this tag and the case simply never fires.
+        case EC_TAGS.EC_TAG_KNOWNFILE_RATING:                 result.rating = val || 0; break;
       }
     }
 
