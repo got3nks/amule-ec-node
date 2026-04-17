@@ -1296,6 +1296,7 @@ class AmuleClient {
         case EC_TAGS.EC_TAG_CLIENT_IDENT_STATE:     result.identState = val; break;
         case EC_TAGS.EC_TAG_CLIENT_OBFUSCATION_STATUS: result.obfuscation = val; break;
         case EC_TAGS.EC_TAG_CLIENT_PART_STATUS:     result.partStatus = sub.value; break;
+        case EC_TAGS.EC_TAG_CLIENT_UPLOAD_PART_STATUS: result.uploadPartStatus = sub.value; break;
         case EC_TAGS.EC_TAG_CLIENT_AVAILABLE_PARTS: result.availableParts = val; break;
         case EC_TAGS.EC_TAG_CLIENT_SERVER_NAME:     result.serverName = val; break;
         case EC_TAGS.EC_TAG_CLIENT_SERVER_IP:
