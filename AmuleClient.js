@@ -1606,21 +1606,21 @@ class AmuleClient {
     if (prefs.slotAllocation !== undefined) {
       children.push({
         tagId: EC_TAGS.EC_TAG_CONN_SLOT_ALLOCATION,
-        tagType: EC_TAG_TYPES.EC_TAGTYPE_UINT16,
+        tagType: EC_TAG_TYPES.EC_TAGTYPE_UINT32,
         value: prefs.slotAllocation
       });
     }
     if (prefs.maxDownload !== undefined) {
       children.push({
         tagId: EC_TAGS.EC_TAG_CONN_MAX_DL,
-        tagType: EC_TAG_TYPES.EC_TAGTYPE_UINT16,
+        tagType: EC_TAG_TYPES.EC_TAGTYPE_UINT32,
         value: prefs.maxDownload
       });
     }
     if (prefs.maxUpload !== undefined) {
       children.push({
         tagId: EC_TAGS.EC_TAG_CONN_MAX_UL,
-        tagType: EC_TAG_TYPES.EC_TAGTYPE_UINT16,
+        tagType: EC_TAG_TYPES.EC_TAGTYPE_UINT32,
         value: prefs.maxUpload
       });
     }
