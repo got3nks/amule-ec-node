@@ -29,6 +29,9 @@ function fixMojibake(str) {
     const decoded = Buffer.from(str, 'latin1').toString('utf8');
     if (!decoded.includes('\uFFFD')) return decoded;
   } catch {}
+  str = str.replaceAll('Ãª', 'ê').replaceAll('Ã©', 'é').replaceAll('Ã¨', 'è')
+      .replaceAll('Ã¢','â').replaceAll('Ã´','ô').replaceAll('Ã','a')
+      .replaceAll('Ã´','ô').replaceAll('Ã ', 'à');
   return str;
 }
 
@@ -608,6 +611,108 @@ class AmuleClient {
     }
 
     return this.getSearchResults?.() ?? null;
+  }
+
+
+  /**
+   * Ask aMule to fetch the list of files shared by a specific user on the ed2k
+   * network (aMule's "View shared files" feature).
+   *
+   * This sends EC_OP_FRIEND with an EC_TAG_FRIEND_SHARED container holding
+   * either an EC_TAG_CLIENT (peer ECID) or EC_TAG_FRIEND (friend ECID) subtag,
+   * which makes aMule request the remote client's shared file list over ed2k
+   * (see Get_EC_Response_Friend in ExternalConn.cpp → RequestSharedFileList).
+   *
+   * IMPORTANT: this is asynchronous. The EC command only *triggers* the request
+   * and aMule returns EC_OP_NOOP immediately. When the peer eventually answers,
+   * aMule injects the received files into its search-result list
+   * (CSearchList::ProcessSharedFileList), so they are read back via
+   * getSearchResults(). Use getClientSharedFiles() to do both steps at once.
+   *
+   * The user must already be known to aMule as a CUpDownClient (e.g. a download
+   * source, an upload/queue peer, or a friend). Obtain the ECID from getUpdate()
+   * (the `clients` array) or from the friend list.
+   *
+   * @param {number} ecid - ECID of the client (or friend) to query
+   * @param {Object} [options]
+   * @param {boolean} [options.asFriend=false] - Treat `ecid` as a friend ECID
+   *   (EC_TAG_FRIEND) rather than a peer client ECID (EC_TAG_CLIENT)
+   * @returns {Promise<boolean>} True if aMule accepted the request (EC_OP_NOOP)
+   */
+  async requestClientSharedFiles(ecid, options = {}) {
+    const { asFriend = false } = options;
+    if (!Number.isInteger(ecid) || ecid < 0) {
+      throw new TypeError('requestClientSharedFiles: ecid must be a non-negative integer');
+    }
+
+    if (DEBUG) console.log(`[DEBUG] Requesting shared file list for ${asFriend ? 'friend' : 'client'} ecid=${ecid}`);
+
+    const subTagId = asFriend ? EC_TAGS.EC_TAG_FRIEND : EC_TAGS.EC_TAG_CLIENT;
+    const reqTags = [
+      this.session.createTag(
+        EC_TAGS.EC_TAG_FRIEND_SHARED,
+        EC_TAG_TYPES.EC_TAGTYPE_CUSTOM,
+        undefined,  // container tag — carries only the subtag below
+        [
+          {
+            tagId: subTagId,
+            tagType: EC_TAG_TYPES.EC_TAGTYPE_UINT32,
+            value: ecid
+          }
+        ]
+      )
+    ];
+
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_FRIEND, reqTags);
+
+    if (DEBUG) console.log("[DEBUG] requestClientSharedFiles response:", response);
+
+    if (response.opcode === EC_OPCODES.EC_OP_FAILED) {
+      const errorMsg = response.tags?.find(t => t.tagId === EC_TAGS.EC_TAG_STRING)?.humanValue;
+      throw new Error(errorMsg || 'Failed to request shared file list');
+    }
+
+    return this._isSuccess(response);
+  }
+
+  /**
+   * Request a user's shared files and wait for the ed2k answer to arrive.
+   *
+   * Convenience wrapper that triggers requestClientSharedFiles() and then polls
+   * the search-result list (where aMule delivers the peer's answer) until new
+   * results show up or the timeout elapses.
+   *
+   * NOTE: aMule stores these alongside regular search results and does not tag
+   * them by peer, so results from a prior search may also be present. Poll from
+   * a clean state (e.g. right after EC_OP_SEARCH_START clears the list) for the
+   * cleanest output.
+   *
+   * @param {number} ecid - ECID of the client (or friend) to query
+   * @param {Object} [options]
+   * @param {boolean} [options.asFriend=false] - Treat `ecid` as a friend ECID
+   * @param {number} [options.timeoutMs=30000] - Max time to wait for the answer
+   * @param {number} [options.intervalMs=1000] - Poll interval in ms
+   * @returns {Promise<{ resultsLength: number, results: Object[] }>} Shared files
+   *   (parsed like search results), sorted by source count
+   */
+  async getClientSharedFiles(ecid, options = {}) {
+    const { asFriend = false, timeoutMs = 30_000, intervalMs = 1000 } = options;
+
+    const before = (await this.getSearchResults()).resultsLength;
+
+    await this.requestClientSharedFiles(ecid, { asFriend });
+
+    const startTime = Date.now();
+    while (Date.now() - startTime < timeoutMs) {
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+      const current = await this.getSearchResults();
+      if (current.resultsLength > before) {
+        return current;
+      }
+    }
+
+    if (DEBUG) console.log("[DEBUG] getClientSharedFiles: timed out waiting for peer answer");
+    return this.getSearchResults();
   }
 
   /**
