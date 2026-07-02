@@ -31,7 +31,7 @@ function fixMojibake(str) {
   } catch {}
   str = str.replaceAll('Ãª', 'ê').replaceAll('Ã©', 'é').replaceAll('Ã¨', 'è')
       .replaceAll('Ã¢','â').replaceAll('Ã´','ô').replaceAll('Ã','a')
-      .replaceAll('Ã´','ô').replaceAll('Ã ', 'à');
+      .replaceAll('Ã´','ô').replaceAll('Ã ', 'à').replaceAll('Ã®', 'i');
   return str;
 }
 
