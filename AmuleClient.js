@@ -38,6 +38,7 @@ class AmuleClient {
    * @param {number} port - aMule EC port (default 4712)
    * @param {string} password - EC access password
    * @param {Object} [options] - Additional options passed to ECProtocol
+   * @param {number} [options.requestTimeout] - Per-request timeout in ms (default 30000)
    */
   constructor(host, port, password, options = {}) {
     this.session = new ECProtocol(host, port, password, options);

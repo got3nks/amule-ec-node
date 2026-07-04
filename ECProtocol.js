@@ -13,7 +13,14 @@ const {
 const DEBUG = false;
 
 class ECProtocol {
-  constructor(host = HOST, port = PORT, password = PASSWORD, options = {}) {
+  /**
+   * @param {string} host - aMule EC host (default '127.0.0.1')
+   * @param {number} port - aMule EC port (default 4712)
+   * @param {string} password - EC access password (default 'password')
+   * @param {Object} [options] - Additional options:
+   * @param {number} [options.requestTimeout] - Per-request timeout in ms (default 30000)
+   */
+  constructor(host = '127.0.0.1', port = 4712, password = 'password', options = {}) {
     this.host = host;
     this.port = port;
     this.password = password;
