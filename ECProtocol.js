@@ -33,6 +33,19 @@ class ECProtocol {
     this.requestTimeout = options.requestTimeout !== undefined ? options.requestTimeout : 30000;
     // Consecutive timeout counter — after 2 in a row, destroy socket to trigger reconnect
     this.consecutiveTimeouts = 0;
+    // Tag names the daemon advertised on its EC_OP_AUTH_OK reply, e.g.
+    // "EC_TAG_CAN_SHAREDDIRS_CONFIG". Empty until authenticate() runs, and
+    // repopulated on every (re)authentication.
+    this.serverCapabilities = new Set();
+  }
+
+  /**
+   * Whether the daemon advertised a capability on its AUTH_OK reply.
+   * @param {string} tagName - e.g. "EC_TAG_CAN_SHAREDDIRS_CONFIG"
+   * @returns {boolean}
+   */
+  hasCapability(tagName) {
+    return this.serverCapabilities.has(tagName);
   }
 
   async connect() {
@@ -556,7 +569,19 @@ class ECProtocol {
 
     // Step 5: Check the server's response.
     if (authReply.opcode === EC_OPCODES.EC_OP_AUTH_OK) {
-      if(DEBUG) console.log("Authentication successful");
+      // The daemon advertises optional features as empty EC_TAG_CAN_* tags on
+      // this reply and nowhere else, so they have to be taken here or lost.
+      // Recorded by name for every tag present, not just the ones this client
+      // happens to use: opcodes a daemon does not know fall through to wxFAIL
+      // at the tail of ProcessRequest2, so callers gate on these rather than
+      // sending optimistically. Reset first — a reconnect may land on a
+      // different daemon.
+      this.serverCapabilities = new Set(
+        (authReply.tags || [])
+          .map(tag => this.getKeyByValue(EC_TAGS, tag.tagId))
+          .filter(name => name.startsWith('EC_TAG_CAN_'))
+      );
+      if(DEBUG) console.log("Authentication successful, capabilities:", [...this.serverCapabilities]);
     } else {
       const reason = authReply.tags?.[0]?.humanValue || 'unknown reason';
       throw new Error(

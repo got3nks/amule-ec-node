@@ -84,6 +84,29 @@ const SEARCH_DOWNLOAD_STATUS = Object.freeze({
   QUEUEDCANCELED: 4
 });
 
+/**
+ * The capability EC_OP_GET_SHARED_DIRS / EC_OP_SET_SHARED_DIRS are gated on.
+ * A name rather than the tag id, because that is what the daemon's AUTH_OK
+ * reply is recorded under.
+ */
+const EC_TAG_CAN_SHAREDDIRS_CONFIG_NAME = 'EC_TAG_CAN_SHAREDDIRS_CONFIG';
+
+/**
+ * Why aMule refused a shared directory, from the EC_TAG_SHAREDDIR_ERROR subtag.
+ *
+ * Exposed as `AmuleClient.SHAREDDIR_ERROR`. The daemon sends a number rather
+ * than a sentence precisely so its locale never reaches the caller's UI, so
+ * this client passes the number through and maps it to no wording of its own.
+ * @readonly
+ * @enum {number}
+ */
+const SHAREDDIR_ERROR = Object.freeze({
+  /** The path does not exist, or is not a directory. */
+  MISSING_OR_NOT_A_DIRECTORY: 1,
+  /** The directory exists but the daemon cannot read it. */
+  UNREADABLE: 2
+});
+
 class AmuleClient {
   /**
    * @param {string} host - aMule EC hostname or IP address
@@ -111,6 +134,48 @@ class AmuleClient {
   async connect() {
     await this.session.connect();
     await this.session.authenticate();
+  }
+
+  /**
+   * Feature tags the daemon advertised on its EC_OP_AUTH_OK reply, by name
+   * (e.g. `'EC_TAG_CAN_SHAREDDIRS_CONFIG'`). Empty until connect() has run.
+   * @returns {Set<string>}
+   */
+  get serverCapabilities() {
+    return this.session.serverCapabilities;
+  }
+
+  /**
+   * Whether the connected daemon advertised a given capability.
+   * @param {string} tagName - e.g. `'EC_TAG_CAN_SHAREDDIRS_CONFIG'`
+   * @returns {boolean}
+   */
+  hasCapability(tagName) {
+    return this.session.hasCapability(tagName);
+  }
+
+  /**
+   * Refuse to send an opcode the daemon never advertised.
+   *
+   * Not a nicety: an opcode a daemon does not know falls through to the tail of
+   * ProcessRequest2, which logs and then hits wxFAIL — that aborts a debug
+   * build outright, and compiles out in a release build, which answers
+   * EC_OP_FAILED instead. Since the failure mode depends on how the daemon was
+   * compiled, the only safe move is not to send it. Same hazard class as
+   * amule-org/amule#1227.
+   *
+   * @param {string} tagName - Capability the command needs
+   * @param {string} what - Human name of the command, for the error message
+   * @throws {Error} If the capability was not advertised
+   * @private
+   */
+  _requireCapability(tagName, what) {
+    if (!this.hasCapability(tagName)) {
+      throw new Error(
+        `${what} needs a daemon advertising ${tagName}; this one did not. ` +
+        `Nothing was sent — an unsupported opcode can abort a debug-built core.`
+      );
+    }
   }
 
   /**
@@ -1110,6 +1175,123 @@ class AmuleClient {
 
     // Parse response - first tag is EC_TAG_PREFS_CATEGORIES container
     return this.parseCategories(response.tags);
+  }
+
+  /**
+   * Read the core's shared-directory configuration.
+   *
+   * Replaces reading shareddir.dat off disk: aMule reports its two intent
+   * lists, the explicitly shared roots and the recursively shared ones, and
+   * does the subtree expansion itself.
+   *
+   * Requires a daemon advertising EC_TAG_CAN_SHAREDDIRS_CONFIG (aMule
+   * ea20f8610, #530, in no release as of 3.0.1). Throws without sending
+   * anything when it is absent — see {@link AmuleClient#_requireCapability}.
+   *
+   * @returns {Promise<Array<{ path: string, recursive: boolean }>>} One entry per
+   *   configured root. `recursive` marks a root whose whole subtree is shared;
+   *   the subdirectories it stands for are not listed individually.
+   * @throws {Error} If the daemon did not advertise the capability
+   */
+  async getSharedDirs() {
+    this._requireCapability(EC_TAG_CAN_SHAREDDIRS_CONFIG_NAME, 'getSharedDirs()');
+
+    if (DEBUG) console.log("[DEBUG] Requesting shared directories...");
+
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_SHARED_DIRS, []);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    return (response.tags || [])
+      .filter(tag => tag.tagId === EC_TAGS.EC_TAG_SHAREDDIR)
+      .map(tag => {
+        const recursiveTag = tag.children?.find(c => c.tagId === EC_TAGS.EC_TAG_SHAREDDIR_RECURSIVE);
+        return {
+          path: tag.humanValue,
+          // Present only on recursive roots, so absence is the common case.
+          recursive: recursiveTag !== undefined && recursiveTag.humanValue !== 0
+        };
+      });
+  }
+
+  /**
+   * Replace the core's shared-directory configuration.
+   *
+   * REPLACES, does not merge: whatever is not in `dirs` stops being shared, and
+   * passing an empty array unshares everything. Read the current list with
+   * {@link AmuleClient#getSharedDirs} first if you mean to add to it.
+   *
+   * Validation is per path and the result is partial: aMule applies every path
+   * that validated and reports the others individually. So an empty `rejected`
+   * means everything was taken, and a non-empty one does NOT mean nothing was —
+   * `success` says the daemon accepted and persisted the request, not that every
+   * path in it survived.
+   *
+   * The reply means "saved", not "rescan finished": aMule writes both intent
+   * files synchronously but defers the rescan to its next Process() tick, so do
+   * not poll the shared-file list expecting it to have changed already.
+   *
+   * Requires a daemon advertising EC_TAG_CAN_SHAREDDIRS_CONFIG. Throws without
+   * sending anything when it is absent.
+   *
+   * @param {Array<string|{ path: string, recursive?: boolean }>} dirs - Roots to
+   *   share. A bare string is shared non-recursively.
+   * @returns {Promise<{ success: boolean, rejected: Array<{ path: string, error: number }> }>}
+   *   `error` is an {@link AmuleClient.SHAREDDIR_ERROR} code — a number, never a
+   *   sentence, so the daemon's locale cannot leak into the caller's UI.
+   * @throws {Error} If the daemon did not advertise the capability, or `dirs` is
+   *   not an array of usable paths
+   */
+  async setSharedDirs(dirs) {
+    this._requireCapability(EC_TAG_CAN_SHAREDDIRS_CONFIG_NAME, 'setSharedDirs()');
+
+    if (!Array.isArray(dirs)) {
+      throw new TypeError('setSharedDirs() expects an array of paths');
+    }
+
+    const reqTags = dirs.map((entry, i) => {
+      const path = typeof entry === 'string' ? entry : entry?.path;
+      const recursive = typeof entry === 'string' ? false : Boolean(entry?.recursive);
+      if (typeof path !== 'string' || path === '') {
+        // Refuse rather than send a blank the daemon would reject anyway: the
+        // caller's bug is clearer here than in a rejection list.
+        throw new TypeError(`setSharedDirs(): entry ${i} has no usable path`);
+      }
+      const children = recursive
+        ? [{
+            tagId: EC_TAGS.EC_TAG_SHAREDDIR_RECURSIVE,
+            tagType: EC_TAG_TYPES.EC_TAGTYPE_UINT8,
+            value: 1
+          }]
+        : [];
+      return this.session.createTag(
+        EC_TAGS.EC_TAG_SHAREDDIR,
+        EC_TAG_TYPES.EC_TAGTYPE_STRING,
+        path,
+        children
+      );
+    });
+
+    if (DEBUG) console.log("[DEBUG] Setting shared directories:", dirs.length);
+
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_SET_SHARED_DIRS, reqTags);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    const rejected = (response.tags || [])
+      .filter(tag => tag.tagId === EC_TAGS.EC_TAG_SHAREDDIR_REJECTED)
+      .map(tag => {
+        const errorTag = tag.children?.find(c => c.tagId === EC_TAGS.EC_TAG_SHAREDDIR_ERROR);
+        return {
+          path: tag.humanValue,
+          error: typeof errorTag?.humanValue === 'number' ? errorTag.humanValue : null
+        };
+      });
+
+    return {
+      success: response.opcode === EC_OPCODES.EC_OP_SET_SHARED_DIRS,
+      rejected
+    };
   }
 
   /**
@@ -2158,5 +2340,6 @@ class AmuleClient {
 
 AmuleClient.CATEGORY_REASON = CATEGORY_REASON;
 AmuleClient.SEARCH_DOWNLOAD_STATUS = SEARCH_DOWNLOAD_STATUS;
+AmuleClient.SHAREDDIR_ERROR = SHAREDDIR_ERROR;
 
 module.exports = AmuleClient;
