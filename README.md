@@ -2,7 +2,10 @@
 
 This project provides a Node.js implementation of the aMule External Connections (EC) Protocol based on the [aMule EC Protocol HOWTO](https://wiki.amule.org/wiki/EC_Protocol_HOWTO).
 
-Tested with aMule v2.3.3.
+Tested with aMule 3.0.1, and with master builds past it for the commands that
+only exist there. Older cores, back to 2.3.3, keep working: a command the daemon
+may not know is gated on the capability it advertises at connect time and is
+never sent otherwise, and the rest degrade to the older reply.
 
 ## Features
 
