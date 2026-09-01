@@ -625,8 +625,8 @@ class AmuleClient {
       this._updateState.downloads.set(ecid, merged);
     }
     // Remove downloads no longer present in the response (completed/cancelled)
-    for (const ecid of this._updateState.downloads.keys()) {
-      if (!seenDownloads.has(ecid)) {
+    for (const ecid of this._removedEcids(response, seenDownloads, this._updateState.downloads.keys())) {
+      if (this._updateState.downloads.has(ecid)) {
         if (DEBUG) console.log(`[DEBUG] Removing stale download ecid=${ecid}`);
         this._updateState.downloads.delete(ecid);
         if (this._ecBufferState) this._ecBufferState.delete(ecid);
@@ -666,9 +666,10 @@ class AmuleClient {
       updates.raw = this.deepMergeRaw(existing.raw || {}, this.buildTagTree(tag.children));
       this._updateState.sharedFiles.set(ecid, { ...existing, ...updates });
     }
-    // Remove shared files no longer present (unshared)
-    for (const ecid of this._updateState.sharedFiles.keys()) {
-      if (!seenSharedFiles.has(ecid)) {
+    // Remove shared files no longer present (unshared). Which reply shape says
+    // "gone" depends on the negotiated protocol — see _removedEcids().
+    for (const ecid of this._removedEcids(response, seenSharedFiles, this._updateState.sharedFiles.keys())) {
+      if (this._updateState.sharedFiles.has(ecid)) {
         if (DEBUG) console.log(`[DEBUG] Removing stale shared file ecid=${ecid}`);
         this._updateState.sharedFiles.delete(ecid);
       }
@@ -721,7 +722,10 @@ class AmuleClient {
         this._updateState.clients.set(ecid, { ...existing, ...updates });
       }
       // Remove disconnected clients no longer present
-      for (const ecid of this._updateState.clients.keys()) {
+      // Not _removedEcids(): the daemon emits the whole client list on every
+      // reply regardless of the negotiated protocol — no skip-unchanged, no
+      // tombstones — so absence really does mean gone here.
+      for (const ecid of [...this._updateState.clients.keys()]) {
         if (!seenClients.has(ecid)) {
           if (DEBUG) console.log(`[DEBUG] Removing stale client ecid=${ecid}`);
           this._updateState.clients.delete(ecid);
@@ -1586,6 +1590,40 @@ class AmuleClient {
     if (DEBUG) console.log("[DEBUG] setFileRatingComment response:", response);
 
     return this._isSuccess(response);
+  }
+
+  /**
+   * Decide which tracked ECIDs a getUpdate() reply removes.
+   *
+   * The two protocols are opposites and the choice is not ours to make — it is
+   * whichever the daemon confirmed at auth:
+   *
+   *   legacy (no EC_TAG_CAN_PARTIAL_UPDATE echo, e.g. aMule 2.3.3)
+   *     Every live object is present in every reply, unchanged ones as a
+   *     5-byte alive marker, so absence means the object is gone.
+   *
+   *   partial (echo present)
+   *     Unchanged objects are omitted entirely, so absence means "no change"
+   *     and only an explicit EC_TAG_FILE_REMOVED means gone. Deleting on
+   *     absence here would drop every unchanged object on every poll.
+   *
+   * @param {Object} response - Raw EC response
+   * @param {Set<number>} seen - ECIDs present in this reply
+   * @param {Iterable<number>} tracked - ECIDs currently held in state
+   * @returns {number[]} ECIDs to drop
+   * @private
+   */
+  _removedEcids(response, seen, tracked) {
+    if (this.hasCapability('EC_TAG_CAN_PARTIAL_UPDATE')) {
+      const removed = [];
+      for (const tag of response.tags || []) {
+        if (tag.tagId !== EC_TAGS.EC_TAG_FILE_REMOVED) continue;
+        const ecid = this._tagOwnId(tag);
+        if (ecid !== null) removed.push(ecid);
+      }
+      return removed;
+    }
+    return [...tracked].filter(ecid => !seen.has(ecid));
   }
 
   /**

@@ -43,13 +43,13 @@ class ECProtocol {
     // historical value and only grows once a capability is echoed; reset on
     // each authentication so a reconnect to an older daemon drops back down.
     this.txFlags = EC_FLAGS.EC_FLAG_BASE;
-    // Capabilities offered at AUTH_REQ. Inert against a daemon that does not
-    // echo them, so the default is safe all the way back to 2.3.3. Pass
-    // options.offeredCapabilities to narrow it (e.g. [] to negotiate nothing
-    // and keep the pre-negotiation wire behaviour exactly).
+    // Capabilities offered at AUTH_REQ. Both are inert against a daemon that
+    // does not echo them, so the default is safe all the way back to 2.3.3.
+    // Pass options.offeredCapabilities to narrow it (e.g. [] to negotiate
+    // nothing and keep the pre-negotiation wire behaviour exactly).
     this.offeredCapabilities = options.offeredCapabilities !== undefined
       ? options.offeredCapabilities
-      : ['EC_TAG_CAN_LARGE_TAG_COUNT'];
+      : ['EC_TAG_CAN_LARGE_TAG_COUNT', 'EC_TAG_CAN_PARTIAL_UPDATE'];
   }
 
   /**
