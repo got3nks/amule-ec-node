@@ -7,8 +7,23 @@ const PROTOCOL_VERSION = {
 const EC_FLAGS = {
   EC_FLAG_ZLIB: 0x00000001,
   EC_FLAG_UTF8_NUMBERS: 0x00000002,
-  EC_FLAG_UNKNOWN_MASK: 0xff7f7f08
+  // 0x08 used to sit inside EC_FLAG_UNKNOWN_MASK; aMule took it for AEAD-sealed
+  // bodies precisely so a peer predating that feature rejects such a packet
+  // instead of misparsing ciphertext as tags.
+  EC_FLAG_ENCRYPTED: 0x00000008,
+  // Negotiated, unlike the rest: set only after the daemon echoes
+  // EC_TAG_CAN_LARGE_TAG_COUNT, and dropped again on a reconnect that does not
+  // echo it. Left set against a daemon that never advertised it, the receiver
+  // reads a differently sized count field and misparses everything after it.
+  EC_FLAG_LARGE_TAG_COUNT: 0x00000010,
+  // What this client has always sent, and still sends on its own. Outside
+  // EC_FLAG_UNKNOWN_MASK, so every daemon back to 2.3.3 accepts it.
+  EC_FLAG_BASE: 0x00000020,
+  EC_FLAG_UNKNOWN_MASK: 0xff7f7f00
 };
+
+/** Sentinel uint16 count meaning "a uint32 count follows" — only when negotiated. */
+const EC_TAGCOUNT_SENTINEL = 0xFFFF;
 
 const EC_OPCODES = {
   EC_OP_NOOP: 0x01,
@@ -115,6 +130,7 @@ const EC_TAGS = {
   EC_TAG_CAN_NOTIFY:0x000E,
   EC_TAG_ECID:0x000F,
   EC_TAG_KAD_ID:0x0010,
+  EC_TAG_PREFER_NO_ZLIB:0x0014,
   EC_TAG_CAN_LARGE_TAG_COUNT:0x0011,
   EC_TAG_CAN_PARTIAL_UPDATE:0x0012,
   EC_TAG_CAN_MULTI_SEARCH:0x0015,
@@ -503,6 +519,7 @@ const EC_UPLOAD_STATE = {
 };
 
 module.exports = {
+  EC_TAGCOUNT_SENTINEL,
   PROTOCOL_VERSION,
   EC_FLAGS,
   EC_OPCODES,

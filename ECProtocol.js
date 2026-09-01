@@ -7,6 +7,8 @@ const {
   EC_OPCODES,
   EC_TAGS,
   EC_TAG_TYPES,
+  EC_FLAGS,
+  EC_TAGCOUNT_SENTINEL,
   PROTOCOL_VERSION
 } = require("./ECDefs");
 
@@ -37,6 +39,17 @@ class ECProtocol {
     // "EC_TAG_CAN_SHAREDDIRS_CONFIG". Empty until authenticate() runs, and
     // repopulated on every (re)authentication.
     this.serverCapabilities = new Set();
+    // Transmission-layer flags stamped on every packet we send. Starts at the
+    // historical value and only grows once a capability is echoed; reset on
+    // each authentication so a reconnect to an older daemon drops back down.
+    this.txFlags = EC_FLAGS.EC_FLAG_BASE;
+    // Capabilities offered at AUTH_REQ. Inert against a daemon that does not
+    // echo them, so the default is safe all the way back to 2.3.3. Pass
+    // options.offeredCapabilities to narrow it (e.g. [] to negotiate nothing
+    // and keep the pre-negotiation wire behaviour exactly).
+    this.offeredCapabilities = options.offeredCapabilities !== undefined
+      ? options.offeredCapabilities
+      : ['EC_TAG_CAN_LARGE_TAG_COUNT'];
   }
 
   /**
@@ -146,6 +159,32 @@ class ECProtocol {
   }
 
   /*
+   * Encode a tag/children count, mirroring readTagCount().
+   *
+   * Once EC_FLAG_LARGE_TAG_COUNT is set, a literal count of 0xFFFF can no
+   * longer be written as a plain uint16 — the peer would read it as the
+   * sentinel and consume four bytes that are not there. This client never
+   * builds a packet that large, but the codec should not depend on that.
+   */
+  writeTagCount(count) {
+    const largeCount = (this.txFlags & EC_FLAGS.EC_FLAG_LARGE_TAG_COUNT) !== 0;
+    if (largeCount && count >= EC_TAGCOUNT_SENTINEL) {
+      const buf = Buffer.alloc(6);
+      buf.writeUInt16BE(EC_TAGCOUNT_SENTINEL, 0);
+      buf.writeUInt32BE(count, 2);
+      return buf;
+    }
+    if (count > EC_TAGCOUNT_SENTINEL) {
+      throw new Error(
+        `Cannot encode ${count} tags without EC_TAG_CAN_LARGE_TAG_COUNT (peer did not advertise it)`
+      );
+    }
+    const buf = Buffer.alloc(2);
+    buf.writeUInt16BE(count, 0);
+    return buf;
+  }
+
+  /*
    * Build a tag.
    */
   createTag(tagId, tagType, value, children = []) {
@@ -159,9 +198,10 @@ class ECProtocol {
 
     // Build children block first
     let childrenContent = Buffer.alloc(0);
+    let countWidth = 0;
     if (hasChildren) {
-      const countBuf = Buffer.alloc(2);
-      countBuf.writeUInt16BE(children.length, 0);
+      const countBuf = this.writeTagCount(children.length);
+      countWidth = countBuf.length;
       const childBuffers = children.map(c =>
         this.createTag(c.tagId, c.tagType, c.value, c.children || [])
       );
@@ -218,8 +258,10 @@ class ECProtocol {
     }
 
     // Total payload length includes children + value
+    // The count field itself is not part of the declared payload length, and it
+    // is no longer always 2 bytes wide.
     let payloadLength = childrenContent.length + valueBuffer.length;
-    if(hasChildren) payloadLength = payloadLength - 2;
+    if(hasChildren) payloadLength = payloadLength - countWidth;
 
     const header = Buffer.alloc(7);
     header.writeUInt16BE(encodedTagId, 0); // 2 bytes: tag name
@@ -248,14 +290,14 @@ class ECProtocol {
    *  1-byte opcode, 2-byte tag count, then the tag buffers.
    */
   buildPacket(opcode, tags) {
-    // Transmission layer: 4 bytes flags (here fixed to 0x20)
+    // Transmission layer: 4 bytes flags. EC_FLAG_BASE on its own until a
+    // capability is negotiated; see this.txFlags.
     const flags = Buffer.alloc(4);
-    flags.writeUInt32BE(0x20, 0);
+    flags.writeUInt32BE(this.txFlags, 0);
 
     // Build application layer.
     const opcodeBuf = Buffer.from([opcode]);
-    const tagCountBuf = Buffer.alloc(2);
-    tagCountBuf.writeUInt16BE(tags.length, 0);
+    const tagCountBuf = this.writeTagCount(tags.length);
     const tagsBuf = Buffer.concat(tags);
     const appData = Buffer.concat([opcodeBuf, tagCountBuf, tagsBuf]);
 
@@ -388,19 +430,51 @@ class ECProtocol {
     const opcode = buffer.readUInt8(offset);
     const opcodeStr=this.getKeyByValue(EC_OPCODES, opcode);
     offset += 1;
-    const tagCount = buffer.readUInt16BE(offset);
-    offset += 2;
 
-    if(DEBUG) console.log('Processing tags of ',{ flags, payloadLength, opcode, tagCount });
+    // Whether counts in THIS packet use the sentinel-extended format. Read from
+    // the packet's own flags rather than from connection state, so the bytes
+    // describe themselves. A daemon that never negotiated it — 2.3.3 included —
+    // leaves the bit clear, and then 0xFFFF is a literal count of 65535 and no
+    // follow-up bytes may be consumed.
+    const largeCount = (flags & EC_FLAGS.EC_FLAG_LARGE_TAG_COUNT) !== 0;
+    const counted = this.readTagCount(buffer, offset, largeCount);
+    const tagCount = counted.count;
+    offset = counted.newOffset;
+
+    if(DEBUG) console.log('Processing tags of ',{ flags, payloadLength, opcode, tagCount, largeCount });
 
     let tags = [];
     for (let i = 0; i < tagCount; i++) {
-      const result = this.readTag(buffer, offset);
+      const result = this.readTag(buffer, offset, largeCount);
       tags.push(result.tag);
       offset = result.newOffset;
     }
 
     return { flags, payloadLength, opcode, opcodeStr, tagCount, tags };
+  }
+
+  /*
+   * Read a tag/children count, honouring the sentinel-extended format.
+   *
+   * Plain form is a uint16. Under EC_FLAG_LARGE_TAG_COUNT a uint16 of 0xFFFF is
+   * a marker meaning "a uint32 count follows" — which is why the extended form
+   * may only be read when the packet actually carries the flag: without it that
+   * same 0xFFFF is a legitimate literal count of 65535 children.
+   */
+  readTagCount(buffer, offset, largeCount) {
+    if (offset + 2 > buffer.length) {
+      throw new Error("Insufficient data for tag count.");
+    }
+    const count16 = buffer.readUInt16BE(offset);
+    offset += 2;
+    if (largeCount && count16 === EC_TAGCOUNT_SENTINEL) {
+      if (offset + 4 > buffer.length) {
+        throw new Error("Insufficient data for extended tag count.");
+      }
+      const count32 = buffer.readUInt32BE(offset);
+      return { count: count32, newOffset: offset + 4, width: 6 };
+    }
+    return { count: count16, newOffset: offset, width: 2 };
   }
 
   /*
@@ -414,7 +488,7 @@ class ECProtocol {
    * If the tag has children (lowest bit set), the payload begins with a 2-byte children count,
    * followed by each child (recursively), and then the tag's own value (if any).
    */
-  readTag(buffer, offset) {
+  readTag(buffer, offset, largeCount = false) {
     const start = offset;
 
     if (offset + 7 > buffer.length) {
@@ -435,20 +509,19 @@ class ECProtocol {
     let tagValue;
 
     if (hasChildren) {
-      // Read child count.
-      if (offset + 2 > buffer.length) {
-        throw new Error("Insufficient data for children count.");
-      }
-      const childCount = buffer.readUInt16BE(offset);
-      offset += 2;
+      // Read child count — 2 bytes normally, 6 in the sentinel-extended form.
+      const counted = this.readTagCount(buffer, offset, largeCount);
+      const childCount = counted.count;
+      offset = counted.newOffset;
       // Recursively read each child.
       for (let i = 0; i < childCount; i++) {
-        const result = this.readTag(buffer, offset);
+        const result = this.readTag(buffer, offset, largeCount);
         children.push(result.tag);
         offset = result.newOffset;
       }
-      // The tag's own value is what remains of the payload.
-      const headerSize = 7 + 2; // tag header + children count field
+      // The tag's own value is what remains of the payload. The count field is
+      // not a fixed 2 bytes any more, so take its real width from the read.
+      const headerSize = 7 + counted.width; // tag header + children count field
       const consumed = offset - (start + headerSize);
       const valueLength = tagLen - consumed;
       if (valueLength < 0) {
@@ -528,10 +601,19 @@ class ECProtocol {
       PROTOCOL_VERSION.EC_CURRENT_PROTOCOL_VERSION
     );
 
+    // Capabilities we offer. The daemon only acts on one if it echoes it back
+    // in AUTH_OK, and a daemon that does not know a tag simply never looks it
+    // up — so offering costs nothing against an old core, 2.3.3 included, and
+    // every behaviour below stays gated on the echo rather than on the offer.
+    const offeredCapabilities = this.offeredCapabilities.map(name =>
+      this.createTag(EC_TAGS[name], EC_TAG_TYPES.EC_TAGTYPE_UINT8, 0)
+    );
+
     const saltResponse = await this.sendPacket(EC_OPCODES.EC_OP_AUTH_REQ, [
       clientNameTag,
       clientVerTag,
       protocolVerTag,
+      ...offeredCapabilities,
     ]);
 
     // Step 2: Make sure we received the salt.
@@ -581,7 +663,17 @@ class ECProtocol {
           .map(tag => this.getKeyByValue(EC_TAGS, tag.tagId))
           .filter(name => name.startsWith('EC_TAG_CAN_'))
       );
-      if(DEBUG) console.log("Authentication successful, capabilities:", [...this.serverCapabilities]);
+
+      // Rebuilt from scratch, never OR-ed into the previous value: a reconnect
+      // may land on a daemon that advertises less, and carrying a negotiated
+      // bit over to one that never echoed it makes it read a differently sized
+      // count field and misparse everything after it.
+      this.txFlags = EC_FLAGS.EC_FLAG_BASE;
+      if (this.serverCapabilities.has('EC_TAG_CAN_LARGE_TAG_COUNT')) {
+        this.txFlags |= EC_FLAGS.EC_FLAG_LARGE_TAG_COUNT;
+      }
+
+      if(DEBUG) console.log("Authentication successful, capabilities:", [...this.serverCapabilities], "txFlags:", this.txFlags);
     } else {
       const reason = authReply.tags?.[0]?.humanValue || 'unknown reason';
       throw new Error(
