@@ -45,6 +45,10 @@ const CATEGORY_REASON = Object.freeze({
   PATH_REJECTED: 'path_rejected',
   /** The category index does not exist; nothing was applied. */
   NO_SUCH_CATEGORY: 'no_such_category',
+  /** Category 0 is the "all downloads" bucket and cannot be deleted. */
+  DEFAULT_CATEGORY: 'default_category',
+  /** aMule could not read the request as a category command at all. */
+  MALFORMED_REQUEST: 'malformed_request',
   /** aMule refused the command in a shape this client does not recognise. */
   UNKNOWN: 'unknown'
 });
@@ -103,8 +107,10 @@ class AmuleClient {
    * on that meaning nothing more than "the opcode is EC_OP_NOOP".
    *
    * EC_OP_NOOP means everything was applied. On EC_OP_FAILED the discriminator
-   * is which tags come back (src/ExternalConn.cpp), not the message text, which
-   * is translated on the daemon side and so cannot be matched on:
+   * is which tags come back (src/ExternalConn.cpp), never the message text:
+   * wxTRANSLATE only marks a string for extraction, so what arrives is the bare
+   * English literal, and matching on it would bind this client to upstream
+   * wording that no protocol rule holds still.
    *
    *   EC_TAG_CATEGORY + EC_TAG_CATEGORY_PATH
    *     The path could not be used — CPath::MakeDir failed — but the title,
@@ -118,6 +124,9 @@ class AmuleClient {
    *     nothing at all was applied, not even a Notify_CategoryUpdate. The path
    *     tag is deliberately absent so this cannot be read as the case above.
    *     See amule-org/amule#1228.
+   *
+   * EC_OP_DELETE_CATEGORY has its own reply shapes and its own reader; see
+   * _parseCategoryDeleteResult().
    *
    * Cores built before amule-org/amule#1228 never send the second shape — they
    * abort on the out-of-range index instead of replying — so it is parsed when
@@ -139,6 +148,9 @@ class AmuleClient {
       return { success: true, applied: 'full', reason: null, message, keptPath: null, categoryId };
     }
 
+    // Below, `message` is only ever tested for presence. Its text is carried to
+    // the caller and never read here — see the note on wxTRANSLATE above.
+
     if (pathTag) {
       return {
         success: true,
@@ -150,7 +162,7 @@ class AmuleClient {
       };
     }
 
-    if (message !== null) {
+    if (stringTag) {
       return {
         success: false,
         applied: 'none',
@@ -169,6 +181,64 @@ class AmuleClient {
       keptPath: null,
       categoryId
     };
+  }
+
+  /**
+   * Interpret the reply to EC_OP_DELETE_CATEGORY.
+   *
+   * Separate from _parseCategoryResult() because the two opcodes disagree on
+   * what a bare EC_TAG_STRING means. There it is the single "no such category"
+   * refusal; here it covers three, so reusing that reader would label a
+   * protected or malformed delete as a missing category.
+   *
+   * amule-org/amule#1232 gives delete the shape #1228 established, and the
+   * discriminator stays structural — the echoed index, not the wording:
+   *
+   *   no EC_TAG_CATEGORY          The request did not carry a readable index.
+   *                               ("Malformed category request.")
+   *   EC_TAG_CATEGORY == 0        The "all downloads" bucket, which
+   *                               MuleNotify::CategoryDelete refuses outright.
+   *   EC_TAG_CATEGORY > 0         Past the end of the list; CPreferences::
+   *                               RemoveCat is bounds-checked and no-ops.
+   *
+   * EC_TAG_CATEGORY_PATH is never sent for a delete and is not looked for: on a
+   * failed category command that tag means "everything but the path was
+   * applied" (amule-org/amule#1213), which is meaningless here.
+   *
+   * BACKWARD COMPATIBILITY: a core predating #1232 answers EC_OP_NOOP to every
+   * delete, including the three it discards, so against one of those this
+   * reports success for a delete that did nothing. That is not a regression —
+   * it is what the old bare boolean said too — and it cannot be detected from
+   * the reply, which carries no version. A caller that must be certain has to
+   * re-read getCategories(). Nothing here requires a failure reply to arrive,
+   * so the parsing is purely additive against any core.
+   *
+   * @param {Object} response - Raw EC response
+   * @returns {{success: boolean, applied: 'full'|'none', reason: string|null, message: string|null}}
+   * @private
+   */
+  _parseCategoryDeleteResult(response) {
+    const stringTag = response.tags?.find(t => t.tagId === EC_TAGS.EC_TAG_STRING);
+    const message = typeof stringTag?.humanValue === 'string' ? stringTag.humanValue : null;
+
+    if (this._isSuccess(response)) {
+      return { success: true, applied: 'full', reason: null, message: null };
+    }
+
+    // Every branch below reads the opcode, which tags are present, and the
+    // echoed index. None reads the message text.
+    const categoryId = this.parseCategoryIdFromResponse(response);
+    let reason = CATEGORY_REASON.UNKNOWN;
+    if (categoryId === null) {
+      // Only the malformed-request branch omits the index entirely.
+      if (stringTag) reason = CATEGORY_REASON.MALFORMED_REQUEST;
+    } else if (categoryId === 0) {
+      reason = CATEGORY_REASON.DEFAULT_CATEGORY;
+    } else {
+      reason = CATEGORY_REASON.NO_SUCH_CATEGORY;
+    }
+
+    return { success: false, applied: 'none', reason, message };
   }
 
   /**
@@ -1061,12 +1131,22 @@ class AmuleClient {
   /**
    * Delete a category from aMule.
    *
-   * Stays a plain boolean: unlike create and update, the EC handler for this
-   * opcode has no failure branch — it always answers EC_OP_NOOP, so there is no
-   * ambiguity to report and nothing an object return would carry.
-   *
    * @param {number} categoryId - Category ID to delete
-   * @returns {Promise<boolean>} True if the response opcode is EC_OP_NOOP
+   * @returns {Promise<{ success: boolean, applied: 'full'|'none', reason: string|null, message: string|null }>}
+   *   `applied` is 'full' when the category is gone and 'none' when aMule
+   *   discarded the request, with `reason` naming which guard refused it:
+   *   'default_category' for index 0, 'no_such_category' for an index past the
+   *   end of the list, 'malformed_request' when it could not read an index at
+   *   all. There is no 'partial' — a delete either happened or did not — and no
+   *   `keptPath`, which aMule deliberately never sends for a delete. `message`
+   *   is aMule's own English text when it sends any.
+   *
+   *   Against a core predating amule-org/amule#1232 every delete answers
+   *   EC_OP_NOOP, so a discarded one still reports 'full'; see
+   *   {@link AmuleClient#_parseCategoryDeleteResult}.
+   *
+   *   NOTE: this used to resolve to a bare boolean. An object is always truthy,
+   *   so every caller testing the result directly has to be updated with it.
    */
   async deleteCategory(categoryId) {
     if (DEBUG) console.log("[DEBUG] Deleting category:", categoryId);
@@ -1083,7 +1163,7 @@ class AmuleClient {
 
     if (DEBUG) console.log("[DEBUG] Received response:", response);
 
-    return this._isSuccess(response);
+    return this._parseCategoryDeleteResult(response);
   }
 
   /**
