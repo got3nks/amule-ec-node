@@ -53,6 +53,37 @@ const CATEGORY_REASON = Object.freeze({
   UNKNOWN: 'unknown'
 });
 
+/**
+ * What the local core already knows about a search result, from
+ * CSearchFile::DownloadStatus (src/SearchFile.h).
+ *
+ * Exposed as `AmuleClient.SEARCH_DOWNLOAD_STATUS` so callers can compare
+ * against a constant instead of a magic number. The client reports only the
+ * integer the core sends and never derives a label from it: this table mirrors
+ * an enum that lives in another repo on another release cycle, so it belongs at
+ * the call site, where a value it does not yet cover is visible rather than
+ * silently unnamed.
+ *
+ * This is NOT the partfile status a download reports: aMule sends both under
+ * EC_TAG_PARTFILE_STATUS and their low values overlap, so 2 is QUEUED on a
+ * search result and PS_WAITING_FOR_HASH on a download. Search results carry it
+ * as `downloadStatus`, downloads keep it as `status`, and nothing mixes them.
+ * @readonly
+ * @enum {number}
+ */
+const SEARCH_DOWNLOAD_STATUS = Object.freeze({
+  /** Not known to this core. */
+  NEW: 0,
+  /** Successfully downloaded, or shared. */
+  DOWNLOADED: 1,
+  /** Downloading now. */
+  QUEUED: 2,
+  /** Cancelled. */
+  CANCELED: 3,
+  /** Cancelled once, downloading again. */
+  QUEUEDCANCELED: 4
+});
+
 class AmuleClient {
   /**
    * @param {string} host - aMule EC hostname or IP address
@@ -734,6 +765,13 @@ class AmuleClient {
    *   and children keep the `parentId` they arrived with. A child whose parent
    *   is missing from the reply is kept at the top level rather than dropped,
    *   with its `parentId` left in place to say so.
+   *
+   *   Every result also gains `downloadStatus`, on children as well as parents:
+   *   the integer the core sent under EC_TAG_PARTFILE_STATUS, reported as-is and
+   *   omitted entirely when it sent no tag. Compare it against
+   *   `AmuleClient.SEARCH_DOWNLOAD_STATUS` rather than a bare number. Note that
+   *   a result reads NEW unless the LOCAL core already knows the file, so an
+   *   all-NEW result set says nothing about the wider network.
    */
   async getSearchResults(options = {}) {
     const { groupByHash = false } = options;
@@ -755,6 +793,14 @@ class AmuleClient {
       .map(tag => {
         const fields = this._parseDownloadFields(tag);
         fields.id = this._tagOwnId(tag);
+        // On a search result EC_TAG_PARTFILE_STATUS is CSearchFile::
+        // DownloadStatus, not the partfile status _parseDownloadFields() reads
+        // it as for a download. Republish it under its own name so the two
+        // enums cannot be confused; `status` is left alone for compatibility.
+        // Verbatim: the integer the core sent, absent when it sent no tag.
+        if (fields.status !== undefined) {
+          fields.downloadStatus = fields.status;
+        }
         return fields;
       });
 
@@ -2111,5 +2157,6 @@ class AmuleClient {
 }
 
 AmuleClient.CATEGORY_REASON = CATEGORY_REASON;
+AmuleClient.SEARCH_DOWNLOAD_STATUS = SEARCH_DOWNLOAD_STATUS;
 
 module.exports = AmuleClient;
