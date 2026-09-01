@@ -135,6 +135,6 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
-# Local test files (require aMule fork)
-examples/test-preferences.js
-examples/test-search-rating.js
+# Local test files (require an aMule fork, or a core built from a specific
+# revision). The hyphen is what keeps the published examples/test.js tracked.
+examples/test-*.js

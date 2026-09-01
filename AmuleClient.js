@@ -32,6 +32,23 @@ function fixMojibake(str) {
   return str;
 }
 
+/**
+ * Machine-readable `reason` codes returned by the category commands.
+ *
+ * Exposed as `AmuleClient.CATEGORY_REASON` so callers can branch on a constant
+ * rather than on a string literal, and so the set is discoverable.
+ * @readonly
+ * @enum {string}
+ */
+const CATEGORY_REASON = Object.freeze({
+  /** The download path was refused; everything else about the category was applied. */
+  PATH_REJECTED: 'path_rejected',
+  /** The category index does not exist; nothing was applied. */
+  NO_SUCH_CATEGORY: 'no_such_category',
+  /** aMule refused the command in a shape this client does not recognise. */
+  UNKNOWN: 'unknown'
+});
+
 class AmuleClient {
   /**
    * @param {string} host - aMule EC hostname or IP address
@@ -76,6 +93,82 @@ class AmuleClient {
    */
   _isSuccess(response) {
     return response.opcode === EC_OPCODES.EC_OP_NOOP;
+  }
+
+  /**
+   * Interpret the reply to EC_OP_CREATE_CATEGORY / EC_OP_UPDATE_CATEGORY.
+   *
+   * These are the only commands whose EC_OP_FAILED is ambiguous, so the richer
+   * parsing lives here rather than in _isSuccess() — a dozen other methods rely
+   * on that meaning nothing more than "the opcode is EC_OP_NOOP".
+   *
+   * EC_OP_NOOP means everything was applied. On EC_OP_FAILED the discriminator
+   * is which tags come back (src/ExternalConn.cpp), not the message text, which
+   * is translated on the daemon side and so cannot be matched on:
+   *
+   *   EC_TAG_CATEGORY + EC_TAG_CATEGORY_PATH
+   *     The path could not be used — CPath::MakeDir failed — but the title,
+   *     comment, colour and priority were stored and SaveCats() ran. The path
+   *     tag carries the path aMule kept instead, which for an update is the
+   *     category's previous path and for a create is the incoming directory.
+   *     Consumers treat this as a success; see amule-org/amule#1213.
+   *
+   *   EC_TAG_CATEGORY + EC_TAG_STRING, no path tag
+   *     No such category: the index is past the end of the category list and
+   *     nothing at all was applied, not even a Notify_CategoryUpdate. The path
+   *     tag is deliberately absent so this cannot be read as the case above.
+   *     See amule-org/amule#1228.
+   *
+   * Cores built before amule-org/amule#1228 never send the second shape — they
+   * abort on the out-of-range index instead of replying — so it is parsed when
+   * present and never required. Such a core answers an out-of-range update with
+   * the first shape instead, and this client will report it as a partially
+   * applied update, because on the wire that is all it is told.
+   *
+   * @param {Object} response - Raw EC response
+   * @returns {{success: boolean, applied: 'full'|'partial'|'none', reason: string|null, message: string|null, keptPath: string|null, categoryId: number|null}}
+   * @private
+   */
+  _parseCategoryResult(response) {
+    const categoryId = this.parseCategoryIdFromResponse(response);
+    const pathTag = response.tags?.find(t => t.tagId === EC_TAGS.EC_TAG_CATEGORY_PATH);
+    const stringTag = response.tags?.find(t => t.tagId === EC_TAGS.EC_TAG_STRING);
+    const message = typeof stringTag?.humanValue === 'string' ? stringTag.humanValue : null;
+
+    if (this._isSuccess(response)) {
+      return { success: true, applied: 'full', reason: null, message, keptPath: null, categoryId };
+    }
+
+    if (pathTag) {
+      return {
+        success: true,
+        applied: 'partial',
+        reason: CATEGORY_REASON.PATH_REJECTED,
+        message,
+        keptPath: typeof pathTag.humanValue === 'string' ? pathTag.humanValue : null,
+        categoryId
+      };
+    }
+
+    if (message !== null) {
+      return {
+        success: false,
+        applied: 'none',
+        reason: CATEGORY_REASON.NO_SUCH_CATEGORY,
+        message,
+        keptPath: null,
+        categoryId
+      };
+    }
+
+    return {
+      success: false,
+      applied: 'none',
+      reason: CATEGORY_REASON.UNKNOWN,
+      message: null,
+      keptPath: null,
+      categoryId
+    };
   }
 
   /**
@@ -837,7 +930,15 @@ class AmuleClient {
    * @param {string} [comment=''] - Category comment
    * @param {number} [color=0] - Category color in RGB format (0xRRGGBB)
    * @param {number} [priority=0] - Download priority for this category
-   * @returns {Promise<{ success: boolean, categoryId: number|null }>} Result with the new category ID
+   * @returns {Promise<{ success: boolean, categoryId: number|null, applied: 'full'|'partial'|'none', reason: string|null, message: string|null, keptPath: string|null }>}
+   *   `success` is true when the category exists afterwards, which includes the
+   *   case where aMule refused the download path: it still creates the category
+   *   and falls back to the incoming directory. `applied` tells the two apart —
+   *   'full' when the path was taken, 'partial' when it was not, with `reason`
+   *   set to 'path_rejected' and `keptPath` holding the directory aMule used.
+   *   `categoryId` is only sent by aMule on the 'partial' reply; a clean create
+   *   answers with a bare EC_OP_NOOP and it stays null. Read back the list with
+   *   {@link AmuleClient#getCategories} if the caller needs the id either way.
    */
   async createCategory(title, path = '', comment = '', color = 0, priority = 0) {
     if (DEBUG) console.log("[DEBUG] Creating category:", title);
@@ -883,19 +984,11 @@ class AmuleClient {
 
     if (DEBUG) console.log("[DEBUG] Received response:", response);
 
-    // Parse the new category ID from response
-    const categoryId = this.parseCategoryIdFromResponse(response);
+    const result = this._parseCategoryResult(response);
 
-    // Success if we got a valid category ID back (aMule created it)
-    // OR if the opcode indicates success
-    const success = categoryId !== null || this._isSuccess(response);
+    if (DEBUG) console.log("[DEBUG] Category creation result:", result, "opcode:", response.opcode);
 
-    if (DEBUG) console.log("[DEBUG] Category creation success:", success, "categoryId:", categoryId, "opcode:", response.opcode);
-
-    return {
-      success: success,
-      categoryId: categoryId
-    };
+    return result;
   }
 
   /**
@@ -906,7 +999,17 @@ class AmuleClient {
    * @param {string} comment - Category comment
    * @param {number} color - Category color in RGB format (0xRRGGBB)
    * @param {number} priority - Download priority
-   * @returns {Promise<boolean>} True if the update was successful
+   * @returns {Promise<{ success: boolean, applied: 'full'|'partial'|'none', reason: string|null, message: string|null, keptPath: string|null }>}
+   *   `applied` is 'full' when aMule took every field, 'partial' when it stored
+   *   the title, comment, colour and priority but refused the path — `reason`
+   *   is then 'path_rejected' and `keptPath` holds the path it kept, and this
+   *   still counts as `success: true` because the update did land — and 'none'
+   *   when nothing was applied, with `reason` 'no_such_category' for an index
+   *   past the end of the list. `message` is aMule's own text when it sends
+   *   any, verbatim and in the daemon's locale, so log it rather than match it.
+   *
+   *   NOTE: this used to resolve to a bare boolean. An object is always truthy,
+   *   so every caller testing the result directly has to be updated with it.
    */
   async updateCategory(categoryId, title, path, comment, color, priority) {
     if (DEBUG) console.log("[DEBUG] Updating category:", categoryId);
@@ -952,13 +1055,18 @@ class AmuleClient {
 
     if (DEBUG) console.log("[DEBUG] Received response:", response);
 
-    return this._isSuccess(response);
+    return this._parseCategoryResult(response);
   }
 
   /**
    * Delete a category from aMule.
+   *
+   * Stays a plain boolean: unlike create and update, the EC handler for this
+   * opcode has no failure branch — it always answers EC_OP_NOOP, so there is no
+   * ambiguity to report and nothing an object return would carry.
+   *
    * @param {number} categoryId - Category ID to delete
-   * @returns {Promise<boolean>} True if the deletion was successful
+   * @returns {Promise<boolean>} True if the response opcode is EC_OP_NOOP
    */
   async deleteCategory(categoryId) {
     if (DEBUG) console.log("[DEBUG] Deleting category:", categoryId);
@@ -1475,7 +1583,14 @@ class AmuleClient {
    */
   parseCategoryIdFromResponse(response) {
     const categoryTag = response.tags?.find(t => t.tagId === EC_TAGS.EC_TAG_CATEGORY);
-    return categoryTag?.humanValue || categoryTag?.value || null;
+    if (!categoryTag) return null;
+
+    // Not `humanValue || value`: category 0 is a real id and would fall through
+    // to null. aMule sizes the tag to the value, so it arrives as UINT8/16/32.
+    let id = categoryTag.humanValue !== undefined ? categoryTag.humanValue : categoryTag.value;
+    // readUIntBE tops out at 6 bytes; a category id never needs more than 4.
+    if (Buffer.isBuffer(id)) id = (id.length > 0 && id.length <= 6) ? id.readUIntBE(0, id.length) : null;
+    return typeof id === 'number' ? id : null;
   }
 
   /**
@@ -1817,5 +1932,7 @@ class AmuleClient {
     return result;
   }
 }
+
+AmuleClient.CATEGORY_REASON = CATEGORY_REASON;
 
 module.exports = AmuleClient;
