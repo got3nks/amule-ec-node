@@ -703,19 +703,90 @@ class AmuleClient {
 
   /**
    * Get the results of a completed search.
-   * @returns {Promise<{ resultsLength: number, results: Object[] }>} Search results sorted by source count
+   *
+   * aMule can return several filenames for one hash — the expandable tree the
+   * GUI shows — but only if the caller asks. Grouping is opt-in: the daemon
+   * checks for the mere presence of an EC_TAG_SEARCH_PARENT tag on the request
+   * and otherwise stays parents-only, which is why this defaults to off and
+   * existing callers see exactly what they saw before.
+   *
+   * With `groupByHash`, children come back as further TOP-LEVEL tags rather
+   * than nested ones, each carrying its parent's ECID. They are rebuilt into a
+   * `children` array here, because the source-count sort would otherwise
+   * scatter them away from their parent — children carry their own counts.
+   *
+   * Sending the flag to a daemon predating the feature (aMule 2f31fd6fe, in no
+   * release as of 3.0.1) is harmless: the unknown tag is ignored and the reply
+   * is parents-only. An empty `children` array is therefore the normal result
+   * on such a core and is not an error.
+   *
+   * Which name aMule elects as the parent is not necessarily the most
+   * informative one, so treat the parent as one name among the group rather
+   * than the best one.
+   *
+   * @param {Object} [options]
+   * @param {boolean} [options.groupByHash=false] - Ask for the same-hash siblings
+   * @returns {Promise<{ resultsLength: number, totalLength: number, results: Object[] }>}
+   *   `results` is sorted by source count, as before. `resultsLength` counts it;
+   *   `totalLength` counts every result including nested children, so the two
+   *   differ only when grouping is on. Each result gains `id` (its ECID). With
+   *   grouping, parents gain `children` (possibly empty, sorted the same way)
+   *   and children keep the `parentId` they arrived with. A child whose parent
+   *   is missing from the reply is kept at the top level rather than dropped,
+   *   with its `parentId` left in place to say so.
    */
-  async getSearchResults() {
-    if (DEBUG) console.log("[DEBUG] Requesting search results...");
+  async getSearchResults(options = {}) {
+    const { groupByHash = false } = options;
+    if (DEBUG) console.log("[DEBUG] Requesting search results, groupByHash:", groupByHash);
 
-    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_SEARCH_RESULTS, []);
+    // aMule tests only that the tag is present, never its value.
+    const reqTags = groupByHash
+      ? [this.session.createTag(EC_TAGS.EC_TAG_SEARCH_PARENT, EC_TAG_TYPES.EC_TAGTYPE_UINT32, 0)]
+      : [];
+
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_SEARCH_RESULTS, reqTags);
 
     if (DEBUG) console.log("[DEBUG] Received response:", response);
 
-    const results = response.tags.map(tag => this._parseDownloadFields(tag));
-    results.sort((a, b) => (b.sourceCount || 0) - (a.sourceCount || 0));
+    const bySourceCount = (a, b) => (b.sourceCount || 0) - (a.sourceCount || 0);
 
-    return { resultsLength: results.length, results };
+    const flat = (response.tags || [])
+      .filter(tag => tag.tagId === EC_TAGS.EC_TAG_SEARCHFILE)
+      .map(tag => {
+        const fields = this._parseDownloadFields(tag);
+        fields.id = this._tagOwnId(tag);
+        return fields;
+      });
+
+    if (!groupByHash) {
+      flat.sort(bySourceCount);
+      return { resultsLength: flat.length, totalLength: flat.length, results: flat };
+    }
+
+    const byId = new Map();
+    for (const r of flat) {
+      if (r.id !== null) byId.set(r.id, r);
+    }
+
+    const parents = [];
+    for (const r of flat) {
+      const parent = r.parentId !== undefined ? byId.get(r.parentId) : undefined;
+      if (parent && parent !== r) {
+        (parent.children || (parent.children = [])).push(r);
+      } else {
+        // A parent, or a child whose parent did not come back. Keeping the
+        // orphan visible beats dropping a filename the caller asked for.
+        parents.push(r);
+      }
+    }
+
+    for (const p of parents) {
+      if (!p.children) p.children = [];
+      p.children.sort(bySourceCount);
+    }
+    parents.sort(bySourceCount);
+
+    return { resultsLength: parents.length, totalLength: flat.length, results: parents };
   }
 
   /**
@@ -723,9 +794,11 @@ class AmuleClient {
    * @param {string} query - Search query string
    * @param {string|number} network - Network type: 'global', 'local', 'kad', or EC_SEARCH_TYPE value
    * @param {string} [extension] - Optional file extension filter
-   * @returns {Promise<{ resultsLength: number, results: Object[] }>} Search results sorted by source count
+   * @param {Object} [options] - Passed through to {@link AmuleClient#getSearchResults}
+   * @param {boolean} [options.groupByHash=false] - Ask for the same-hash siblings
+   * @returns {Promise<{ resultsLength: number, totalLength: number, results: Object[] }>} Search results sorted by source count
    */
-  async searchAndWaitResults(query, network, extension) {
+  async searchAndWaitResults(query, network, extension, options = {}) {
     const timeoutMs = 120000;
     const intervalMs = 1000;
     const startTime = Date.now();
@@ -771,7 +844,7 @@ class AmuleClient {
       await new Promise(resolve => setTimeout(resolve, intervalMs));
     }
 
-    return this.getSearchResults?.() ?? null;
+    return this.getSearchResults?.(options) ?? null;
   }
 
 
@@ -1288,6 +1361,23 @@ class AmuleClient {
   }
 
   /**
+   * Read a tag's own value as an ECID.
+   *
+   * Separate from _parseDownloadFields(), which walks only tag.children: the
+   * ECID is the tag's own value, so that walk can never see it.
+   *
+   * @param {Object} tag - Raw EC tag
+   * @returns {number|null} The ECID, or null if the tag carries no numeric value
+   * @private
+   */
+  _tagOwnId(tag) {
+    // Not `humanValue || value`: an ECID of 0 would fall through to null.
+    let id = tag?.humanValue !== undefined ? tag.humanValue : tag?.value;
+    if (Buffer.isBuffer(id)) id = (id.length > 0 && id.length <= 6) ? id.readUIntBE(0, id.length) : null;
+    return typeof id === 'number' ? id : null;
+  }
+
+  /**
    * Parse fields from an EC_TAG_PARTFILE tag (for incremental merging).
    * Only returns fields actually present in the response.
    * @param {Object} tag - Raw EC tag
@@ -1323,6 +1413,13 @@ class AmuleClient {
         // https://github.com/amule-project/amule/pull/452). aMule builds without
         // that patch don't emit this tag and the case simply never fires.
         case EC_TAGS.EC_TAG_KNOWNFILE_RATING:                 result.rating = val || 0; break;
+        // Search-result grouping: the ECID of the result this one hangs under.
+        // Emitted only when the file has a parent, so absence means "parent",
+        // and only when the caller opted in -- see getSearchResults(). Never
+        // appears on an EC_TAG_PARTFILE, so downloads are unaffected, and never
+        // on an EC_DETAIL_UPDATE reply either: ECSpecialCoreTags.cpp returns
+        // before adding it, so getUpdate() will not see this field.
+        case EC_TAGS.EC_TAG_SEARCH_PARENT:                    result.parentId = val; break;
       }
     }
 
