@@ -741,19 +741,53 @@ class AmuleClient {
   }
 
   /**
-   * Start a search on the specified network.
-   * @param {string} query - Search query string
-   * @param {number} network - Network type (EC_SEARCH_TYPE value)
-   * @param {string|null} [extension] - Optional file extension filter
-   * @returns {Promise<Object[]>} Raw response tags
+   * Resolve a network to an EC_SEARCH_TYPE value.
+   * @param {string|number} network - 'global', 'local', 'kad', or an EC_SEARCH_TYPE value
+   * @returns {number}
+   * @throws {Error} If it is neither
    * @private
    */
-  async _search(query, network, extension=null) {
+  _normaliseNetwork(network) {
+    if (Object.values(EC_SEARCH_TYPE).includes(network)) return network;
+    switch (network) {
+      case 'global': return EC_SEARCH_TYPE.EC_SEARCH_GLOBAL;
+      case 'local':  return EC_SEARCH_TYPE.EC_SEARCH_LOCAL;
+      case 'kad':    return EC_SEARCH_TYPE.EC_SEARCH_KAD;
+    }
+    throw new Error(`Invalid network type: ${network}`);
+  }
+
+  /**
+   * Start a search and return as soon as the daemon has accepted it.
+   *
+   * Pair with {@link AmuleClient#getSearchProgress} and
+   * {@link AmuleClient#getSearchResults} to poll from the caller, leaving the EC
+   * connection free between polls. {@link AmuleClient#searchAndWaitResults} does
+   * the same in one call but holds the connection throughout.
+   *
+   * CALLERS MUST SERIALISE SEARCHES. Without EC_TAG_CAN_MULTI_SEARCH, which this
+   * client does not negotiate, every EC_OP_SEARCH_START clears the previous
+   * result set: a search started before the last one is read back loses those
+   * results. ed2k searches share one slot daemon-side and Kad is tracked per id,
+   * but on this single-bucket path that distinction buys nothing. Lock around
+   * start→results in the caller; this client deliberately does not.
+   *
+   * @param {string} query - Search query string
+   * @param {string|number} network - 'global', 'local', 'kad', or an EC_SEARCH_TYPE value
+   * @param {string|null} [extension] - Optional file extension filter
+   * @returns {Promise<{ started: boolean, message: string|null, tags: Object[] }>}
+   *   `started` is false when the daemon refused, `message` its text. Reported
+   *   rather than thrown, so searchAndWaitResults() keeps polling on as it
+   *   always has; a caller driving the loop should check it.
+   * @throws {Error} If `network` is not a recognised network
+   */
+  async startSearch(query, network, extension = null) {
     if (DEBUG) console.log("[DEBUG] Requesting search...");
 
-    // Make sure network flag is valid
-    if (!Object.values(EC_SEARCH_TYPE).includes(network)) throw new Error(`Invalid network type: ${network}`);
-    
+    const searchType = this._normaliseNetwork(network);
+    // Before the round trip: a local search is judged complete by elapsed time.
+    this._searchContext = { network: searchType, startedAt: Date.now() };
+
     // Prepare request
     let children = [
       {
@@ -773,7 +807,7 @@ class AmuleClient {
       this.session.createTag(
         EC_TAGS.EC_TAG_SEARCH_TYPE,
         EC_TAG_TYPES.EC_TAGTYPE_UINT8,
-        network,
+        searchType,
         children
       )
     ];
@@ -782,23 +816,89 @@ class AmuleClient {
 
     if (DEBUG) console.log("[DEBUG] Received response:", response);
 
-    return response.tags;
+    const messageTag = response.tags?.find(t => t.tagId === EC_TAGS.EC_TAG_STRING);
+    return {
+      started: response.opcode !== EC_OPCODES.EC_OP_FAILED,
+      message: typeof messageTag?.humanValue === 'string' ? messageTag.humanValue : null,
+      tags: response.tags
+    };
+  }
+
+  /**
+   * Start a search on the specified network.
+   * @param {string} query - Search query string
+   * @param {number} network - Network type (EC_SEARCH_TYPE value)
+   * @param {string|null} [extension] - Optional file extension filter
+   * @returns {Promise<Object[]>} Raw response tags
+   * @deprecated Use {@link AmuleClient#startSearch}
+   * @private
+   */
+  async _search(query, network, extension = null) {
+    return (await this.startSearch(query, network, extension)).tags;
+  }
+
+  /**
+   * Whether a search on `network` is finished. aMule reports no progress for a
+   * local search, so that one goes by elapsed time, as this has always done.
+   *
+   * @param {number|null} network - EC_SEARCH_TYPE value of the running search
+   * @param {number|null} progress - EC_TAG_SEARCH_STATUS value, if sent
+   * @param {number|null} elapsedMs - Since startSearch(), if known
+   * @returns {boolean}
+   * @private
+   */
+  _isSearchComplete(network, progress, elapsedMs) {
+    switch (network) {
+      case EC_SEARCH_TYPE.EC_SEARCH_KAD:
+        return progress === 0xFFFF || progress === 0xFFFE;
+      case EC_SEARCH_TYPE.EC_SEARCH_GLOBAL:
+        return progress === 100 || progress === 0;
+      case EC_SEARCH_TYPE.EC_SEARCH_LOCAL:
+        return elapsedMs !== null && elapsedMs >= 10000;
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * Poll the progress of the running search. One short round trip, so a caller
+   * can drive its own loop and leave the connection free in between.
+   *
+   * @returns {Promise<{ complete: boolean, progress: number|null, network: number|null, elapsedMs: number|null, tags: Object[] }>}
+   *   `complete` applies the per-network rule so callers need not re-derive it.
+   *   It is false when no search was started through this client — the network
+   *   is then unknown and there is nothing to judge against.
+   */
+  async getSearchProgress() {
+    if (DEBUG) console.log("[DEBUG] Requesting search request status...");
+
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_SEARCH_PROGRESS, []);
+
+    if (DEBUG) console.log("[DEBUG] Received response:", response);
+
+    const statusTag = response.tags?.find(t => t.tagId === EC_TAGS.EC_TAG_SEARCH_STATUS);
+    const progress = statusTag?.humanValue ?? null;
+    const context = this._searchContext;
+    const network = context ? context.network : null;
+    const elapsedMs = context ? Date.now() - context.startedAt : null;
+
+    return {
+      complete: this._isSearchComplete(network, progress, elapsedMs),
+      progress,
+      network,
+      elapsedMs,
+      tags: response.tags
+    };
   }
 
   /**
    * Get the progress status of an ongoing search.
    * @returns {Promise<Object[]>} Raw response tags with search progress
+   * @deprecated Use {@link AmuleClient#getSearchProgress}
    * @private
    */
   async _getSearchRequestStatus() {
-    if (DEBUG) console.log("[DEBUG] Requesting search request status...");
-    
-    // Send request
-    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_SEARCH_PROGRESS, []);
-
-    if (DEBUG) console.log("[DEBUG] Received response:", response);
-
-    return response.tags;
+    return (await this.getSearchProgress()).tags;
   }
 
   /**
@@ -906,6 +1006,12 @@ class AmuleClient {
 
   /**
    * Start a search and poll until results are ready (up to 120s timeout).
+   *
+   * Holds the EC connection for the whole wait, so a consumer serialising EC
+   * calls blocks everything else meanwhile. Drive {@link AmuleClient#startSearch},
+   * {@link AmuleClient#getSearchProgress} and {@link AmuleClient#getSearchResults}
+   * yourself to avoid that; startSearch()'s serialisation warning applies either way.
+   *
    * @param {string} query - Search query string
    * @param {string|number} network - Network type: 'global', 'local', 'kad', or EC_SEARCH_TYPE value
    * @param {string} [extension] - Optional file extension filter
@@ -918,44 +1024,21 @@ class AmuleClient {
     const intervalMs = 1000;
     const startTime = Date.now();
 
-    if (!Object.values(EC_SEARCH_TYPE).includes(network)) {
-      switch(network) {
-        case 'global':
-          network=EC_SEARCH_TYPE.EC_SEARCH_GLOBAL;
-          break;
-        case 'local':
-          network=EC_SEARCH_TYPE.EC_SEARCH_LOCAL;
-          break;
-        case 'kad':
-          network=EC_SEARCH_TYPE.EC_SEARCH_KAD;
-          break;
-      }
-    }
-
-    // Start the search
-    await this._search(query, network, extension);
+    await this.startSearch(query, network, extension);
 
     if (DEBUG) console.log("[DEBUG] Waiting for search to complete...");
     await new Promise(resolve => setTimeout(resolve, 5000)); // for global/local searches, let's give amule some time for the progress to re-initialize
 
     while (true) {
-      const elapsed = Date.now() - startTime;
-      if (elapsed >= timeoutMs) throw new Error("Search timed out");
+      if (Date.now() - startTime >= timeoutMs) throw new Error("Search timed out");
 
-      const statusTags = await this._getSearchRequestStatus();
-      const statusTag = statusTags.find(tag => tag.tagId === EC_TAGS.EC_TAG_SEARCH_STATUS);
-      const statusValue = statusTag?.humanValue;
-
-      if (
-        (network == EC_SEARCH_TYPE.EC_SEARCH_KAD &&  (statusValue === 0xFFFF || statusValue === 0xFFFE)) || 
-        (network == EC_SEARCH_TYPE.EC_SEARCH_GLOBAL && (statusValue == 100 || statusValue == 0)) || 
-        (network == EC_SEARCH_TYPE.EC_SEARCH_LOCAL && elapsed >= 10000) // we get no progress for local searches, but they should be fast
-      ) {
+      const status = await this.getSearchProgress();
+      if (status.complete) {
         if (DEBUG) console.log("[DEBUG] Search completed.");
         break;
       }
 
-      if (DEBUG) console.log(`[DEBUG] Search ${network} progress: ${statusValue}`);
+      if (DEBUG) console.log(`[DEBUG] Search ${status.network} progress: ${status.progress}`);
       await new Promise(resolve => setTimeout(resolve, intervalMs));
     }
 
