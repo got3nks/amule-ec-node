@@ -2314,6 +2314,38 @@ class AmuleClient {
    *     dlCapacity (kB/s, graph scale), ulCapacity (kB/s, graph scale),
    *     tcpPort, udpPort, udpDisabled, maxConnections, autoConnect, ed2kEnabled, kadEnabled }
    */
+  /**
+   * Read the core's directory preferences.
+   *
+   * Not cached: aMule applies these live — a prefs write calls
+   * EnableDirectoryWatcher — so the value can change under a long-lived
+   * connection. Re-read when it matters.
+   *
+   * @returns {Promise<{ incoming: string|undefined, temp: string|undefined, shared: string[], shareHidden: boolean, autoRescan: boolean, followSymlinks: boolean, excludePatterns: string|undefined, excludeRegex: boolean }>}
+   *   `autoRescan` says the core watches its shared directories itself, so a
+   *   caller need not issue EC_OP_SHAREDFILES_RELOAD after its own changes.
+   *   False when the user turned it off and equally on a core too old to send
+   *   the tag — 2.3.3's block ends at EC_TAG_DIRECTORIES_SHARE_HIDDEN and never
+   *   reused 0x1A05, so absence is unambiguous.
+   */
+  async getDirectoryPreferences() {
+    if (DEBUG) console.log("[DEBUG] Requesting directory preferences...");
+
+    const reqTags = [
+      this.session.createTag(
+        EC_TAGS.EC_TAG_SELECT_PREFS,
+        EC_TAG_TYPES.EC_TAGTYPE_UINT32,
+        EC_PREFS.EC_PREFS_DIRECTORIES
+      )
+    ];
+
+    const response = await this.session.sendPacket(EC_OPCODES.EC_OP_GET_PREFERENCES, reqTags);
+
+    if (DEBUG) console.log("[DEBUG] Directory preferences response:", JSON.stringify(response, null, 2));
+
+    return this._parseDirectoryPreferences(response.tags);
+  }
+
   async getConnectionPreferences() {
     if (DEBUG) console.log("[DEBUG] Requesting connection preferences...");
 
@@ -2413,6 +2445,59 @@ class AmuleClient {
    * @returns {Object} Parsed preferences
    * @private
    */
+  _parseDirectoryPreferences(tags) {
+    const result = { shared: [] };
+    const prefsTag = tags.find(t => t.tagId === EC_TAGS.EC_TAG_PREFS_DIRECTORIES);
+    if (!prefsTag || !prefsTag.children) return result;
+
+    // Value tags — read humanValue
+    const valueFields = {
+      [EC_TAGS.EC_TAG_DIRECTORIES_INCOMING]: 'incoming',
+      [EC_TAGS.EC_TAG_DIRECTORIES_TEMP]: 'temp',
+      [EC_TAGS.EC_TAG_DIRECTORIES_EXCLUDE_PATTERNS]: 'excludePatterns'
+    };
+
+    // Presence tags — aMule adds these only when true and omits them when
+    // false, so they arrive as zero-length CECEmptyTags with no value at all.
+    const presenceFields = {
+      [EC_TAGS.EC_TAG_DIRECTORIES_SHARE_HIDDEN]: 'shareHidden',
+      [EC_TAGS.EC_TAG_DIRECTORIES_AUTO_RESCAN]: 'autoRescan',
+      [EC_TAGS.EC_TAG_DIRECTORIES_FOLLOW_SYMLINKS]: 'followSymlinks'
+    };
+
+    for (const field of Object.values(presenceFields)) {
+      result[field] = false;
+    }
+    // Not a presence tag despite being a boolean: aMule always sends it, with
+    // the value in it.
+    result.excludeRegex = false;
+
+    for (const child of prefsTag.children) {
+      const valueField = valueFields[child.tagId];
+      if (valueField) {
+        result[valueField] = child.humanValue;
+        continue;
+      }
+      const presenceField = presenceFields[child.tagId];
+      if (presenceField) {
+        result[presenceField] = true;
+        continue;
+      }
+      if (child.tagId === EC_TAGS.EC_TAG_DIRECTORIES_EXCLUDE_REGEX) {
+        result.excludeRegex = Boolean(child.humanValue);
+        continue;
+      }
+      if (child.tagId === EC_TAGS.EC_TAG_DIRECTORIES_SHARED) {
+        // The tag's own value is the count; the paths are EC_TAG_STRING children.
+        result.shared = (child.children || [])
+          .filter(c => c.tagId === EC_TAGS.EC_TAG_STRING)
+          .map(c => c.humanValue);
+      }
+    }
+
+    return result;
+  }
+
   _parseConnectionPreferences(tags) {
     const result = {};
     const prefsTag = tags.find(t => t.tagId === EC_TAGS.EC_TAG_PREFS_CONNECTIONS);
