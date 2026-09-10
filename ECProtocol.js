@@ -14,6 +14,10 @@ const {
 
 const DEBUG = false;
 
+// Advertised to the daemon at AUTH_REQ. Read from package.json so the version
+// we announce cannot drift from the one we ship.
+const { name: CLIENT_NAME, version: CLIENT_VERSION } = require("./package.json");
+
 class ECProtocol {
   /**
    * @param {string} host - aMule EC host (default '127.0.0.1')
@@ -588,12 +592,12 @@ class ECProtocol {
     const clientNameTag = this.createTag(
       EC_TAGS.EC_TAG_CLIENT_NAME,
       EC_TAG_TYPES.EC_TAGTYPE_STRING,
-      "amule-js"
+      CLIENT_NAME
     );
     const clientVerTag = this.createTag(
       EC_TAGS.EC_TAG_CLIENT_VERSION,
       EC_TAG_TYPES.EC_TAGTYPE_STRING,
-      "0.1-beta"
+      CLIENT_VERSION
     );
     const protocolVerTag = this.createTag(
       EC_TAGS.EC_TAG_PROTOCOL_VERSION,
