@@ -1067,33 +1067,50 @@ class AmuleClient {
    * @param {string} query - Search query string
    * @param {string|number} network - Network type: 'global', 'local', 'kad', or EC_SEARCH_TYPE value
    * @param {string} [extension] - Optional file extension filter
-   * @param {Object} [options] - Passed through to {@link AmuleClient#getSearchResults}
+   * @param {Object} [options] - Also passed through to {@link AmuleClient#getSearchResults}
    * @param {boolean} [options.groupByHash=false] - Ask for the same-hash siblings
+   * @param {number} [options.timeoutMs=120000] - Give up after this long
+   * @param {number} [options.intervalMs=1000] - Gap between polls
+   * @param {number} [options.settleMs=5000] - How long to wait before the first
+   *   poll on a core that reports no lifecycle state. Ignored on cores that do,
+   *   where the first reading is already about this search.
    * @returns {Promise<{ resultsLength: number, totalLength: number, results: Object[] }>} Search results sorted by source count
    */
   async searchAndWaitResults(query, network, extension, options = {}) {
-    const timeoutMs = 120000;
-    const intervalMs = 1000;
+    const {
+      timeoutMs = 120000,
+      intervalMs = 1000,
+      settleMs = 5000
+    } = options;
     const startTime = Date.now();
 
     await this.startSearch(query, network, extension);
 
-    if (DEBUG) console.log("[DEBUG] Waiting for search to complete...");
-    await new Promise(resolve => setTimeout(resolve, 5000)); // for global/local searches, let's give amule some time for the progress to re-initialize
+    // One poll decides which kind of core this is. Whether it reports a
+    // lifecycle state is a property of the core, not of the search, so this
+    // needs no negotiation and nothing remembered between calls.
+    let status = await this.getSearchProgress();
 
-    while (true) {
-      if (Date.now() - startTime >= timeoutMs) throw new Error("Search timed out");
-
-      const status = await this.getSearchProgress();
-      if (status.complete) {
-        if (DEBUG) console.log("[DEBUG] Search completed.");
-        break;
-      }
-
-      if (DEBUG) console.log(`[DEBUG] Search ${status.network} progress: ${status.progress}`);
-      await new Promise(resolve => setTimeout(resolve, intervalMs));
+    if (status.lifecycleState === null) {
+      // Legacy: EC_TAG_SEARCH_STATUS still holds the PREVIOUS search's value
+      // for the first second or so, and 100 and 0 both read as finished, so a
+      // reading taken now would end the search before it started.
+      if (DEBUG) console.log("[DEBUG] No lifecycle state; settling before polling...");
+      await new Promise(resolve => setTimeout(resolve, settleMs));
+      status = await this.getSearchProgress();
     }
 
+    // `complete` on this first reading is honoured deliberately: a fast search
+    // really can be finished by now, and demanding a non-complete reading first
+    // would make every such search run to the timeout.
+    while (!status.complete) {
+      if (Date.now() - startTime >= timeoutMs) throw new Error("Search timed out");
+      if (DEBUG) console.log(`[DEBUG] Search ${status.network} progress: ${status.progress}`);
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+      status = await this.getSearchProgress();
+    }
+
+    if (DEBUG) console.log("[DEBUG] Search completed.");
     return this.getSearchResults?.(options) ?? null;
   }
 
