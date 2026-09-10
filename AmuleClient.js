@@ -100,6 +100,19 @@ const EC_TAG_CAN_SHAREDDIRS_CONFIG_NAME = 'EC_TAG_CAN_SHAREDDIRS_CONFIG';
  * @readonly
  * @enum {number}
  */
+/**
+ * EC_TAG_SEARCH_LIFECYCLE_STATE values, exposed as
+ * `AmuleClient.SEARCH_LIFECYCLE`. FINISHED means the search completed and its
+ * results are still held, not that they have been discarded.
+ * @readonly
+ * @enum {number}
+ */
+const SEARCH_LIFECYCLE = Object.freeze({
+  IDLE: 0,
+  RUNNING: 1,
+  FINISHED: 2
+});
+
 const SHAREDDIR_ERROR = Object.freeze({
   /** The path does not exist, or is not a directory. */
   MISSING_OR_NOT_A_DIRECTORY: 1,
@@ -838,16 +851,28 @@ class AmuleClient {
   }
 
   /**
-   * Whether a search on `network` is finished. aMule reports no progress for a
-   * local search, so that one goes by elapsed time, as this has always done.
+   * Whether the running search is finished.
+   *
+   * Prefers EC_TAG_SEARCH_LIFECYCLE_STATE, which says so outright. The legacy
+   * EC_TAG_SEARCH_STATUS sentinel it falls back to is ambiguous — aMule's own
+   * source calls it "the unchanged overloaded sentinel for pre-3.1" — and 0
+   * means both "not started" and "finished", while a just-started search still
+   * reports the previous one's 100. Measured on a live core: at t=0 the
+   * sentinel read 100 and the lifecycle state read RUNNING.
+   *
+   * The fallback is kept because a 2.3.3 core sends no lifecycle tag at all.
    *
    * @param {number|null} network - EC_SEARCH_TYPE value of the running search
    * @param {number|null} progress - EC_TAG_SEARCH_STATUS value, if sent
    * @param {number|null} elapsedMs - Since startSearch(), if known
+   * @param {number|null} [lifecycleState] - EC_TAG_SEARCH_LIFECYCLE_STATE, if sent
    * @returns {boolean}
    * @private
    */
-  _isSearchComplete(network, progress, elapsedMs) {
+  _isSearchComplete(network, progress, elapsedMs, lifecycleState = null) {
+    if (lifecycleState !== null) {
+      return lifecycleState === SEARCH_LIFECYCLE.FINISHED;
+    }
     switch (network) {
       case EC_SEARCH_TYPE.EC_SEARCH_KAD:
         return progress === 0xFFFF || progress === 0xFFFE;
@@ -864,10 +889,21 @@ class AmuleClient {
    * Poll the progress of the running search. One short round trip, so a caller
    * can drive its own loop and leave the connection free in between.
    *
-   * @returns {Promise<{ complete: boolean, progress: number|null, network: number|null, elapsedMs: number|null, tags: Object[] }>}
-   *   `complete` applies the per-network rule so callers need not re-derive it.
-   *   It is false when no search was started through this client — the network
-   *   is then unknown and there is nothing to judge against.
+   * @returns {Promise<{ complete: boolean, lifecycleState: number|null, resultCount: number|null, percent: number|null, expired: boolean, progress: number|null, network: number|null, elapsedMs: number|null, tags: Object[] }>}
+   *   `complete` is taken from `lifecycleState` when the core sends one and from
+   *   the legacy per-network rule otherwise, so callers need not know which.
+   *
+   *   It stays false until a search has been started through this client, even
+   *   if the core reports FINISHED: aMule keeps the previous search's results
+   *   and its FINISHED state across a reconnect, so on a fresh connection that
+   *   verdict is about someone else's search. Read `lifecycleState` directly to
+   *   see it anyway — {@link AmuleClient.SEARCH_LIFECYCLE} names the values.
+   *
+   *   `resultCount` is the core's own count, useful for spotting results still
+   *   arriving while RUNNING. `percent` is the unambiguous 0-100 companion to
+   *   the overloaded `progress`. `expired` only ever appears to a client that
+   *   negotiated multi-search, which this one does not, so it is always false
+   *   here and parsed for completeness.
    */
   async getSearchProgress() {
     if (DEBUG) console.log("[DEBUG] Requesting search request status...");
@@ -876,14 +912,23 @@ class AmuleClient {
 
     if (DEBUG) console.log("[DEBUG] Received response:", response);
 
-    const statusTag = response.tags?.find(t => t.tagId === EC_TAGS.EC_TAG_SEARCH_STATUS);
-    const progress = statusTag?.humanValue ?? null;
+    const tags = response.tags || [];
+    const value = (tagId) => tags.find(t => t.tagId === tagId)?.humanValue ?? null;
+
+    const progress = value(EC_TAGS.EC_TAG_SEARCH_STATUS);
+    const lifecycleState = value(EC_TAGS.EC_TAG_SEARCH_LIFECYCLE_STATE);
     const context = this._searchContext;
     const network = context ? context.network : null;
     const elapsedMs = context ? Date.now() - context.startedAt : null;
 
     return {
-      complete: this._isSearchComplete(network, progress, elapsedMs),
+      complete: context
+        ? this._isSearchComplete(network, progress, elapsedMs, lifecycleState)
+        : false,
+      lifecycleState,
+      resultCount: value(EC_TAGS.EC_TAG_SEARCH_RESULT_COUNT),
+      percent: value(EC_TAGS.EC_TAG_SEARCH_LIFECYCLE_PERCENT),
+      expired: tags.some(t => t.tagId === EC_TAGS.EC_TAG_SEARCH_EXPIRED),
       progress,
       network,
       elapsedMs,
@@ -934,6 +979,13 @@ class AmuleClient {
    *   and children keep the `parentId` they arrived with. A child whose parent
    *   is missing from the reply is kept at the top level rather than dropped,
    *   with its `parentId` left in place to say so.
+   *
+   *   Nothing is cached: every call reads the core's current set. That set is
+   *   whatever the core holds, which before your own startSearch() is the
+   *   previous search's — kept across reconnects. Gate on
+   *   {@link AmuleClient#getSearchProgress}'s `complete` rather than calling
+   *   this cold. Reading it cold is still legitimate and deliberately allowed:
+   *   {@link AmuleClient#getClientSharedFiles} does exactly that.
    *
    *   Every result also gains `downloadStatus`, on children as well as parents:
    *   the integer the core sent under EC_TAG_PARTFILE_STATUS, reported as-is and
@@ -2547,5 +2599,6 @@ class AmuleClient {
 AmuleClient.CATEGORY_REASON = CATEGORY_REASON;
 AmuleClient.SEARCH_DOWNLOAD_STATUS = SEARCH_DOWNLOAD_STATUS;
 AmuleClient.SHAREDDIR_ERROR = SHAREDDIR_ERROR;
+AmuleClient.SEARCH_LIFECYCLE = SEARCH_LIFECYCLE;
 
 module.exports = AmuleClient;
